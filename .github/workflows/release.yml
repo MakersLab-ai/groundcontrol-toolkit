@@ -1,0 +1,130 @@
+# Builds the `gc` CLI binaries and publishes them as a GitHub release.
+#
+# Release: bump package.json "version", then push a tag on that commit
+#   git tag v0.1.0 && git push origin v0.1.0
+# install.sh is attached to every release: groundcontrol.makerslab.ai/install.sh
+# serves the newest one, so the installer has exactly one source (this repo).
+# The tag version must equal package.json (checked below).
+# workflow_dispatch and pull requests touching the CLI build + upload the
+# artifacts without releasing (dry run) — so signing and the linux builds are
+# exercised before a tag ever depends on them. Only a v* tag releases.
+#
+# Installs go through https://groundcontrol.makerslab.ai/install.sh, which
+# downloads via /api/cli/download/<asset> on the GROUNDCONTROL server: it
+# resolves the newest v* release of this repo and redirects to the asset
+# (with a server-side token while this repo is private).
+#
+# darwin binaries are built on macOS and ad-hoc signed BEFORE they are tarred:
+# an unsigned arm64 Mach-O is killed by the kernel on launch.
+name: CLI release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: npx tsc --noEmit
+
+  build-darwin:
+    name: Build darwin (signed)
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - run: bun install --frozen-lockfile
+      - name: Compile
+        run: node scripts/build.mjs --targets darwin-arm64,darwin-amd64 --no-package
+      - name: Ad-hoc sign
+        run: |
+          for bin in dist/gc_darwin_arm64/gc dist/gc_darwin_amd64/gc; do
+            codesign --force --sign - "$bin"
+            codesign --verify --verbose "$bin"
+          done
+      - name: Smoke test (arm64 runner)
+        run: ./dist/gc_darwin_arm64/gc version
+      - name: Package
+        run: node scripts/build.mjs --targets darwin-arm64,darwin-amd64 --package-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gc-darwin
+          path: dist/gc_*.tar.gz
+          if-no-files-found: error
+
+  build-linux:
+    name: Build linux
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - run: bun install --frozen-lockfile
+      - name: Compile + package
+        run: node scripts/build.mjs --targets linux-amd64,linux-arm64
+      - name: Smoke test (amd64 runner)
+        run: ./dist/gc_linux_amd64/gc version
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gc-linux
+          path: dist/gc_*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Checksums + release
+    needs: [build-darwin, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: gc-*
+          path: dist
+          merge-multiple: true
+      - name: checksums.txt
+        run: |
+          node scripts/build.mjs --checksums-only
+          cat dist/checksums.txt
+          test "$(wc -l < dist/checksums.txt)" -eq 4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gc-release
+          path: |
+            dist/gc_*.tar.gz
+            dist/checksums.txt
+            install.sh
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          VERSION="${TAG#v}"
+          gh release create "$TAG" dist/gc_*.tar.gz dist/checksums.txt install.sh \
+            --verify-tag \
+            --title "gc ${VERSION}" \
+            --notes "GROUNDCONTROL CLI ${VERSION}. Install or update: \`curl -fsSL https://groundcontrol.makerslab.ai/install.sh | sh\`"

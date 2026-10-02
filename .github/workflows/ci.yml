@@ -1,0 +1,30 @@
+# Tests + type check on every push/PR, and daily: the drift test reads the
+# agent guide LIVE from production (GROUNDCONTROL deploys independently of this
+# repo), so a guide that names a gc command or flag this CLI doesn't have turns
+# this red within a day.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: bun test + type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: npx tsc --noEmit
+      - name: Skills have valid frontmatter
+        run: sh scripts/validate-skills.sh
