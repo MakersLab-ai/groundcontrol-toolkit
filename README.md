@@ -20,6 +20,9 @@ curl -fsSL https://github.com/MakersLab-ai/groundcontrol-toolkit/releases/latest
   against a corrupted or truncated download, not against a compromised release: the checksums come from the
   same release as the binary.
 - Pin a version with `sh -s -- --version 0.2.0`. To update, run the installer again.
+- If that version (default: the latest release) is already installed, in the install dir or as `gc` on
+  `PATH`, nothing is downloaded and only the next steps are printed. A setup prompt that starts with the
+  installer is therefore harmless where `gc` is preinstalled (e.g. in a container image). `--force` reinstalls.
 
 ## Connect
 
