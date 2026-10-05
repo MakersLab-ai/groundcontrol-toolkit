@@ -1,0 +1,62 @@
+# goreleaser v2 — builds the gc binaries and publishes the GitHub release.
+#   Check:    goreleaser check
+#   Dry run:  goreleaser release --snapshot --clean   (writes dist/)
+#   Release:  push a tag v<version>; .github/workflows/release.yml runs it.
+version: 2
+
+project_name: gc
+
+builds:
+  - id: gc
+    main: ./cmd/gc
+    binary: gc
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    # darwin/arm64: Go's linker ad-hoc signs the binary itself (macOS kills
+    # unsigned arm64 binaries), so no codesign step is needed here.
+
+archives:
+  - id: gc
+    ids: [gc]
+    formats: [tar.gz]
+    # Stable names: install.sh downloads releases/latest/download/gc_<os>_<arch>.tar.gz
+    name_template: "gc_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+release:
+  github:
+    owner: MakersLab-ai
+    name: groundcontrol-toolkit
+  name_template: "gc {{ .Version }}"
+  # A tag like v0.3.0-rc.1 is published as a pre-release, so it never becomes
+  # releases/latest (what install.sh downloads by default).
+  prerelease: auto
+  # The installer travels with every release, so
+  # releases/latest/download/install.sh is always the newest one.
+  extra_files:
+    - glob: ./install.sh
+  footer: |
+    Install or update:
+
+        curl -fsSL https://github.com/MakersLab-ai/groundcontrol-toolkit/releases/latest/download/install.sh | sh
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^chore:"
+      - "^docs:"
+      - "^test:"

@@ -1,0 +1,56 @@
+# Vet + tests + skill frontmatter on every push/PR to main, plus a goreleaser
+# config check and snapshot build so a PR exercises the release config before
+# a tag ever depends on it.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go vet + go test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Skills have valid frontmatter
+        run: sh scripts/validate-skills.sh
+      - name: install.sh is valid POSIX sh
+        run: sh -n install.sh
+
+  snapshot:
+    name: goreleaser check + snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: check
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --snapshot --clean
+      - name: Smoke test (linux/amd64)
+        run: |
+          tar -xzf dist/gc_linux_amd64.tar.gz -C "$RUNNER_TEMP" gc
+          "$RUNNER_TEMP/gc" version
+          test "$(wc -l < dist/checksums.txt)" -eq 4
