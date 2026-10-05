@@ -10,6 +10,11 @@
 # --install-dir / $GC_INSTALL_DIR) and links `groundcontrol` -> `gc`
 # (oh-my-zsh aliases `gc` to `git commit`). Updating = running this again.
 #
+# If the wanted version is already installed (in the install dir or on PATH),
+# nothing is downloaded and only the next steps are printed — so a setup prompt
+# that always starts with this installer is harmless on a machine that already
+# has gc (e.g. baked into a container image). --force reinstalls anyway.
+#
 # GC_INSTALL_BASE is a testing hook: a URL of a directory that holds
 # gc_<os>_<arch>.tar.gz and checksums.txt. It moves the checksum source too, so
 # the check only proves the download matches that directory — point it only at
@@ -21,6 +26,23 @@ TMP=""
 NEW=""
 
 say() { printf '%s\n' "$*"; }
+
+# installed_version <path> → "X.Y.Z" if <path> is our gc, else nothing.
+# </dev/null: another tool named gc (Graphviz has one) must not wait on stdin.
+installed_version() {
+  [ -x "$1" ] || return 0
+  "$1" version </dev/null 2>/dev/null | sed -n 's/^gc v\{0,1\}\([0-9][0-9A-Za-z.+-]*\)$/\1/p' | head -n 1
+}
+
+next_steps() {
+  say ""
+  say "Next: connect it to your workspace with the agent API key from GROUNDCONTROL."
+  say "Via stdin, which keeps the key out of ps and your shell history:"
+  say "  printf %s \"\$KEY\" | $1 onboarding --token -"
+  say "or directly:"
+  say "  $1 onboarding --token \"gc_live_…\""
+  say "Then check with: $1 context"
+}
 die() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 cleanup() {
   [ -n "$NEW" ] && rm -f "$NEW"
@@ -33,6 +55,7 @@ cleanup() {
 main() {
   INSTALL_DIR="${GC_INSTALL_DIR:-}"
   VERSION=""
+  FORCE=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -40,8 +63,11 @@ main() {
       --version=*) VERSION="${1#*=}"; shift ;;
       --install-dir) [ $# -ge 2 ] || die "--install-dir needs a value"; INSTALL_DIR="$2"; shift 2 ;;
       --install-dir=*) INSTALL_DIR="${1#*=}"; shift ;;
+      --force) FORCE=1; shift ;;
       -h|--help)
-        say "Usage: install.sh [--version X.Y.Z] [--install-dir DIR]"
+        say "Usage: install.sh [--version X.Y.Z] [--install-dir DIR] [--force]"
+        say "Skips the download when that version (default: the latest release) is already installed in DIR or"
+        say "on PATH; --force reinstalls."
         say "Env: GC_INSTALL_DIR (default ~/.local/bin); GC_INSTALL_BASE (testing hook: a directory URL holding the"
         say "     release assets — the checksums come from there too)"
         exit 0 ;;
@@ -91,6 +117,25 @@ main() {
     die "need sha256sum or shasum to verify the download"
   fi
 
+  # Already installed? The wanted version is --version, else the latest release
+  # (read off GitHub's /releases/latest redirect; if that fails we just install).
+  WANT="$VERSION"
+  if [ -z "$WANT" ] && [ -z "${GC_INSTALL_BASE:-}" ] && command -v curl >/dev/null 2>&1; then
+    WANT="$(curl -fsSLI --retry 2 -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null \
+      | sed -n 's#.*/releases/tag/v\{0,1\}##p')" || WANT=""
+  fi
+  if [ -n "$WANT" ] && [ -z "$FORCE" ]; then
+    ON_PATH="$(command -v gc 2>/dev/null || true)"
+    for c in "$INSTALL_DIR/gc" "$ON_PATH"; do
+      [ -n "$c" ] || continue
+      if [ "$(installed_version "$c")" = "$WANT" ]; then
+        say "gc $WANT is already installed at $c — nothing to download (--force reinstalls)."
+        if [ "$c" = "$ON_PATH" ]; then next_steps gc; else next_steps "$c"; fi
+        return 0
+      fi
+    done
+  fi
+
   TMP="$(mktemp -d 2>/dev/null || mktemp -d -t gc-install)"
   trap cleanup EXIT
   trap 'exit 130' INT TERM
@@ -130,13 +175,15 @@ main() {
       ;;
   esac
 
-  say ""
-  say "Next: connect it to your workspace with the agent API key from GROUNDCONTROL."
-  say "Via stdin, which keeps the key out of ps and your shell history:"
-  say "  printf %s \"\$KEY\" | $GC onboarding --token -"
-  say "or directly:"
-  say "  $GC onboarding --token \"gc_live_…\""
-  say "Then check with: $GC context"
+  # Another gc earlier on PATH would shadow the one we just installed.
+  ON_PATH="$(command -v gc 2>/dev/null || true)"
+  if [ "$GC" = gc ] && [ -n "$ON_PATH" ] && [ "$ON_PATH" != "$INSTALL_DIR/gc" ]; then
+    say ""
+    say "Note: \`gc\` on your PATH is $ON_PATH ($(installed_version "$ON_PATH" || true)), not $INSTALL_DIR/gc."
+    GC="$INSTALL_DIR/gc"
+  fi
+
+  next_steps "$GC"
 }
 
 main "$@"
