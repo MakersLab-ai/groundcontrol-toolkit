@@ -8,6 +8,7 @@ package cli
 // consumes items before that someone sees them.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -131,23 +132,32 @@ func cursorPath(env config.Env, name string) string {
 	return filepath.Join(config.Dir(env), "listen", unsafeName.ReplaceAllString(name, "_")+".json")
 }
 
-func readCursor(path string) string {
+// readCursor returns "" when there is no cursor file yet (first run). A file
+// that exists but holds no usable cursor is an error: silently restarting at
+// "now" would drop every change since the last good poll.
+func readCursor(path string) (string, error) {
 	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	bad := func(why string) error {
+		return fmt.Errorf("cursor file %s %s — pass --since <iso|15m|2h> to reset it", path, why)
+	}
 	if err != nil {
-		return ""
+		return "", bad("cannot be read (" + err.Error() + ")")
 	}
 	v, err := js.Parse(b)
 	if err != nil {
-		return ""
+		return "", bad("is not valid JSON")
 	}
 	c, ok := js.Get(v, "cursor").(string)
 	if !ok {
-		return ""
+		return "", bad("has no \"cursor\" string")
 	}
 	if _, ok := js.ParseDate(c); !ok {
-		return ""
+		return "", bad("does not hold a timestamp (\"" + c + "\")")
 	}
-	return c
+	return c, nil
 }
 
 func writeCursor(path, cursor string) error {
@@ -177,9 +187,12 @@ func resolveTargets(c *Ctx) ([]listenTarget, error) {
 			if key == "" {
 				continue
 			}
+			// --api-url > the profile's url > GC_API_URL > production
 			u := urlFlag
-			if u == "" {
-				u = config.Field(p, "api_url")
+			for _, alt := range []string{config.Field(p, "api_url"), env["GC_API_URL"], config.DefaultAPIURL} {
+				if u == "" {
+					u = alt
+				}
 			}
 			targets = append(targets, listenTarget{name: name, isProfile: true, apiURL: strings.TrimRight(u, "/"), apiKey: key})
 		}
@@ -228,6 +241,8 @@ func listenCommand() *Command {
 			"run `gc changes --since \"$GC_LISTEN_SINCE\"` to see the same items), GC_LISTEN_COUNT, GC_LISTEN_CHANGES_FILE",
 			"(the /changes response as JSON). A failing command is logged; the cursor still advances.",
 			"Without --exec: one line per item on stdout (JSON lines with --json). Logs go to stderr.",
+			"SIGINT/SIGTERM stop after the running command (its process group gets SIGTERM); a second signal kills it.",
+			"A corrupt cursor file is never reset silently: that workspace fails until you pass --since.",
 		}, "\n"),
 		Examples: []string{
 			`gc listen --once --all-profiles --exec "openclaw cron run gc-worker-spawn"`,
@@ -244,8 +259,24 @@ type listener struct {
 	logMu    sync.Mutex
 	mu       sync.Mutex
 	stopping bool
+	forced   bool // a second signal: the running command was killed
 	child    *exec.Cmd
 	wake     chan struct{}
+	// ctx is cancelled by the first signal, so an in-flight poll against a
+	// stalled server doesn't hold the shutdown.
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+// signalGroup signals the --exec command's whole process group (it runs with
+// Setpgid), so the grandchildren of `sh -c 'a && b'` stop too.
+func signalGroup(cmd *exec.Cmd, sig syscall.Signal) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	if err := syscall.Kill(-cmd.Process.Pid, sig); err != nil {
+		cmd.Process.Signal(sig)
+	}
 }
 
 func (l *listener) log(target, msg string) {
@@ -264,22 +295,32 @@ func (l *listener) isStopping() bool {
 	return l.stopping
 }
 
+// onSignal: the first SIGINT/SIGTERM stops gracefully (SIGTERM to the running
+// command's group, cancel an in-flight poll); a second one escalates (SIGKILL).
 func (l *listener) onSignal(sig string) {
 	l.mu.Lock()
-	if l.stopping {
-		l.mu.Unlock()
-		return
-	}
+	second := l.stopping
 	l.stopping = true
+	if second {
+		l.forced = true
+	}
 	child := l.child
 	l.mu.Unlock()
-	suffix := ""
-	if child != nil {
-		suffix = " after the running command"
-	}
-	l.log("", sig+" — stopping"+suffix)
-	if child != nil && child.Process != nil {
-		child.Process.Signal(syscall.SIGTERM)
+	l.cancel()
+	if second {
+		if child != nil {
+			l.log("", sig+" again — killing the running command")
+			signalGroup(child, syscall.SIGKILL)
+		} else {
+			l.log("", sig+" again — exiting")
+		}
+	} else {
+		suffix := ""
+		if child != nil {
+			suffix = " after the running command (signal again to kill it)"
+		}
+		l.log("", sig+" — stopping"+suffix)
+		signalGroup(child, syscall.SIGTERM)
 	}
 	select {
 	case l.wake <- struct{}{}:
@@ -313,6 +354,8 @@ func runListen(c *Ctx) error {
 	}
 
 	l := &listener{c: c, exec: execCmd, wake: make(chan struct{}, 1)}
+	l.ctx, l.cancel = context.WithCancel(context.Background())
+	defer l.cancel()
 	if c.Sys.OnSignal != nil {
 		off := c.Sys.OnSignal(l.onSignal)
 		defer off()
@@ -354,6 +397,12 @@ func runListen(c *Ctx) error {
 		}
 		if allRejected {
 			return clierr.NotConnected(clierr.Rejected, targets[0].apiURL)
+		}
+		l.mu.Lock()
+		forced := l.forced
+		l.mu.Unlock()
+		if forced {
+			return &clierr.Error{Msg: "stopped by a second signal; the running command was killed.", Code: 130}
 		}
 		if once || l.isStopping() {
 			failed := []string{}
@@ -401,13 +450,24 @@ func (l *listener) pollOne(t listenTarget, sinceOverride string) (string, error)
 	path := cursorPath(c.Sys.Env, t.name)
 	since := sinceOverride
 	if since == "" {
-		since = readCursor(path)
+		stored, err := readCursor(path)
+		if err != nil {
+			l.log(t.name, err.Error()+"; skipping this workspace")
+			return "error", nil
+		}
+		since = stored
 	}
 	if since == "" {
 		since = js.NowISO()
 	}
-	res, err := api.New(t.apiURL, t.apiKey, "").GetChanges(since)
+	client := api.New(t.apiURL, t.apiKey, "")
+	client.Ctx = l.ctx
+	res, err := client.GetChanges(since)
 	if err != nil {
+		if l.ctx.Err() != nil {
+			l.log(t.name, "poll cancelled")
+			return "cancelled", nil
+		}
 		if clierr.IsUnauthorized(err) {
 			profileFlag := ""
 			if t.isProfile {
@@ -493,6 +553,10 @@ func (l *listener) pollOne(t listenTarget, sinceOverride string) (string, error)
 	}
 	cmd := exec.Command("sh", "-c", l.exec)
 	cmd.Env = envList
+	// Its own process group: a signal reaches the whole command tree, and a
+	// terminal Ctrl-C reaches it only through us (graceful, then escalating).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Stdout = c.Sys.Stdout
 	cmd.Stderr = c.Sys.Stderr
 	if err := cmd.Start(); err != nil {
@@ -502,7 +566,7 @@ func (l *listener) pollOne(t listenTarget, sinceOverride string) (string, error)
 	l.mu.Lock()
 	l.child = cmd
 	if l.stopping { // the signal arrived while the command was starting
-		cmd.Process.Signal(syscall.SIGTERM)
+		signalGroup(cmd, syscall.SIGTERM)
 	}
 	l.mu.Unlock()
 	defer func() {
@@ -513,7 +577,7 @@ func (l *listener) pollOne(t listenTarget, sinceOverride string) (string, error)
 	// Started: these items are handed over. Advance now, so a listener killed
 	// while the session runs doesn't hand them over twice.
 	if err := writeCursor(path, next); err != nil {
-		cmd.Process.Signal(syscall.SIGTERM)
+		signalGroup(cmd, syscall.SIGTERM)
 		cmd.Wait()
 		return "", err
 	}

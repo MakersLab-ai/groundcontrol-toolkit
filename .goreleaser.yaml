@@ -40,6 +40,9 @@ release:
     owner: MakersLab-ai
     name: groundcontrol-toolkit
   name_template: "gc {{ .Version }}"
+  # A tag like v0.3.0-rc.1 is published as a pre-release, so it never becomes
+  # releases/latest (what install.sh downloads by default).
+  prerelease: auto
   # The installer travels with every release, so
   # releases/latest/download/install.sh is always the newest one.
   extra_files:

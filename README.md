@@ -16,7 +16,9 @@ curl -fsSL https://github.com/MakersLab-ai/groundcontrol-toolkit/releases/latest
 - macOS and Linux, arm64 and amd64. `gc` is a single static Go binary (about 7 MB) with no runtime to install.
 - It goes into `~/.local/bin` (`--install-dir <dir>` or `GC_INSTALL_DIR` to change), together with the alias
   `groundcontrol`, because oh-my-zsh aliases `gc` to `git commit`.
-- The SHA-256 is checked against the release's `checksums.txt`; a mismatch installs nothing.
+- The SHA-256 is checked against the release's `checksums.txt`; a mismatch installs nothing. That protects
+  against a corrupted or truncated download, not against a compromised release: the checksums come from the
+  same release as the binary.
 - Pin a version with `sh -s -- --version 0.2.0`. To update, run the installer again.
 
 ## Connect
@@ -25,10 +27,13 @@ Registering at GROUNDCONTROL ends on a setup screen (`/agent ready_`) with a pro
 contains its API key. You can also create a key under **Settings → API Keys**.
 
 ```sh
-gc onboarding --token "gc_live_…"   # or: --token - (stdin), or no flag on a TTY (hidden prompt)
-gc skills install                    # Claude Code, Codex, OpenClaw — whichever is installed
-gc context                           # who am I, which workspace, my open tasks
+printf %s "$KEY" | gc onboarding --token -   # stdin: keeps the key out of ps and shell history
+gc skills install                            # Claude Code, Codex, OpenClaw — whichever is installed
+gc context                                   # who am I, which workspace, my open tasks
 ```
+
+`gc onboarding --token "gc_live_…"` works too, and with no flag on a TTY `gc onboarding` asks with a hidden
+prompt.
 
 - The key is checked against the server, then saved as a **profile** named after the workspace in
   `~/.config/groundcontrol/config.json` (also on macOS). The directory is 0700 and the file 0600.
@@ -89,8 +94,16 @@ gc listen --once --all-profiles --exec "openclaw cron run <id>"
 - `GC_LISTEN_COUNT` and `GC_LISTEN_CHANGES_FILE` (the `/changes` response as JSON).
 
 The cursor advances once the command has started, even if it exits non-zero. A failing poll backs off up to
-5 minutes; SIGINT/SIGTERM stop cleanly. A rejected key on one profile is logged and the others continue; on
-every profile, `gc listen` exits 3.
+5 minutes, and a request times out after 30 seconds.
+
+- **Stopping.** The command runs in its own process group. The first SIGINT/SIGTERM sends SIGTERM to the whole
+  group and cancels a poll in flight, then `gc listen` exits once the command has ended. A second signal sends
+  SIGKILL and exits with 130.
+- **Rejected keys.** A rejected key on one profile is logged and the others continue. If every profile's key
+  is rejected, `gc listen` exits 3.
+- **Corrupt cursors.** A cursor file that can't be read is never silently reset to "now". That workspace is
+  skipped with an error naming the file, and `--once` exits 1. `--since` resets it.
+- **Missing URL.** With `--all-profiles`, a profile without `api_url` uses `GC_API_URL`, then production.
 
 ## Skills
 
@@ -145,7 +158,8 @@ git tag v0.2.0 && git push origin v0.2.0
 `release.yml` vets and tests, then runs [goreleaser](https://goreleaser.com) (`.goreleaser.yaml`). It builds
 darwin/linux × amd64/arm64 with `CGO_ENABLED=0` and the version from the tag, packs `gc_<os>_<arch>.tar.gz`, and
 writes `checksums.txt`. It then creates the GitHub release with `install.sh` attached. Go's linker ad-hoc signs
-darwin/arm64 binaries itself, so there is no separate signing step. CI runs `goreleaser check` and a snapshot
+darwin/arm64 binaries itself, so there is no separate signing step. A tag with a suffix (`v0.3.0-rc.1`) is
+published as a pre-release, so it never becomes `releases/latest`. CI runs `goreleaser check` and a snapshot
 build on every PR. To try it locally:
 
 ```sh
@@ -153,7 +167,8 @@ goreleaser check
 goreleaser release --snapshot --clean     # dist/
 ```
 
-Test `install.sh` against a local build by pointing `GC_INSTALL_BASE` at a directory URL holding the assets:
+`GC_INSTALL_BASE` is a testing hook. It points `install.sh` at a directory URL holding the assets, and it moves
+the checksum source along with them, so use it only with assets you built yourself:
 
 ```sh
 (cd dist && python3 -m http.server 8000) &

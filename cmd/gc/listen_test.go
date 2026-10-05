@@ -28,6 +28,7 @@ var listenCursors = map[string]string{keyA: "2026-10-02T12:00:00.000Z", keyB: "2
 type poll struct{ key, since string }
 
 type listenMock struct {
+	stall bool // hold /changes until the client goes away
 	mu    sync.Mutex
 	items map[string]bool
 	polls []poll
@@ -58,7 +59,15 @@ func newListenMock() *listenMock {
 		m.mu.Lock()
 		m.polls = append(m.polls, poll{k, since})
 		has := m.items[k]
+		stall := m.stall
 		m.mu.Unlock()
+		if stall {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(20 * time.Second):
+			}
+			return
+		}
 		data := `{"task_comments":[],"tasks_updated":[],"goal_checkins":[]}`
 		if has {
 			data = `{"task_comments":[{"id":"c1","task_id":"t1","task_title":"Ship","content":"hi","created_at":"2026-10-02T11:59:00Z","for":"self"}],` +
@@ -77,6 +86,7 @@ func listenCase(t *testing.T, m *listenMock) string {
 	m.mu.Lock()
 	m.polls = nil
 	m.items = map[string]bool{keyA: true, keyB: false}
+	m.stall = false
 	m.mu.Unlock()
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "config"), 0o700)
@@ -299,4 +309,133 @@ func TestListen(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	t.Run("a corrupt cursor file fails that workspace (naming the file and --since); the others still poll", func(t *testing.T) {
+		home := listenCase(t, m)
+		bad := filepath.Join(home, "config", "listen", "alpha.json")
+		os.MkdirAll(filepath.Dir(bad), 0o700)
+		os.WriteFile(bad, []byte("{not json"), 0o600)
+		r := runGc(t, home, []string{"listen", "--once", "--all-profiles"}, nil, nil)
+		if r.code != 1 {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+		mustContain(t, r.err, "cursor file "+bad+" is not valid JSON — pass --since")
+		mustContain(t, r.err, "Poll failed for: alpha")
+		if ps := m.snapshot(); len(ps) != 1 || ps[0].key != keyB {
+			t.Fatalf("polls %v — alpha must not restart at now, beta must still poll", ps)
+		}
+		if b, _ := os.ReadFile(bad); string(b) != "{not json" {
+			t.Fatal("the corrupt cursor was overwritten")
+		}
+		os.WriteFile(bad, []byte(`{"cursor":"soon"}`), 0o600)
+		r = runGc(t, home, []string{"listen", "--once"}, nil, nil)
+		if r.code != 1 || !strings.Contains(r.err, `does not hold a timestamp ("soon")`) {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+		// --since resets it
+		r = runGc(t, home, []string{"listen", "--once", "--since", "1h"}, nil, nil)
+		if r.code != 0 || cursorOf(t, home, "alpha") != listenCursors[keyA] {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+	})
+
+	t.Run("--all-profiles: a profile without api_url falls back to GC_API_URL", func(t *testing.T) {
+		home := listenCase(t, m)
+		os.WriteFile(filepath.Join(home, "config", "config.json"), []byte(`{"current":"alpha","profiles":{"alpha":{"api_key":"`+keyA+`"}}}`), 0o600)
+		r := runGc(t, home, []string{"listen", "--once", "--all-profiles"}, nil, map[string]string{"GC_API_URL": m.base})
+		if r.code != 0 || len(m.snapshot()) != 1 {
+			t.Fatalf("code %d, polls %d: %s", r.code, len(m.snapshot()), r.err)
+		}
+	})
+
+	t.Run("SIGTERM cancels an in-flight poll against a stalled server", func(t *testing.T) {
+		home := listenCase(t, m)
+		m.mu.Lock()
+		m.stall = true
+		m.mu.Unlock()
+		cmd := exec.Command(gcBin, "listen", "--interval", "5s")
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GC_CONFIG_DIR=" + filepath.Join(home, "config")}
+		var errb bytes.Buffer
+		cmd.Stderr = &errb
+		cmd.Start()
+		waitFor(t, func() bool { return len(m.snapshot()) == 1 })
+		time.Sleep(100 * time.Millisecond)
+		start := time.Now()
+		cmd.Process.Signal(syscall.SIGTERM)
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("exit: %v (%s)", err, errb.String())
+		}
+		if d := time.Since(start); d > 3*time.Second {
+			t.Fatalf("shutdown took %v", d)
+		}
+		mustContain(t, errb.String(), "poll cancelled")
+	})
+
+	t.Run("--exec runs in its own process group: SIGTERM reaches grandchildren; a second signal SIGKILLs", func(t *testing.T) {
+		home := listenCase(t, m)
+		pidFile := filepath.Join(home, "pid")
+		start := func(script string) (*exec.Cmd, *bytes.Buffer) {
+			cmd := exec.Command(gcBin, "listen", "--interval", "5s", "--exec", script)
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GC_CONFIG_DIR=" + filepath.Join(home, "config")}
+			var errb bytes.Buffer
+			cmd.Stderr = &errb
+			cmd.Start()
+			waitFor(t, func() bool { b, _ := os.ReadFile(pidFile); return len(bytes.TrimSpace(b)) > 0 })
+			return cmd, &errb
+		}
+		alive := func() bool {
+			b, _ := os.ReadFile(pidFile)
+			var pid int
+			fmt.Sscan(string(b), &pid)
+			return syscall.Kill(pid, 0) == nil
+		}
+
+		// graceful: the grandchild (sleep) is in the group and dies with it
+		cmd, errb := start(fmt.Sprintf(`sleep 30 & echo $! > %s; wait`, pidFile))
+		begin := time.Now()
+		cmd.Process.Signal(syscall.SIGTERM)
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("exit: %v (%s)", err, errb.String())
+		}
+		// A surviving grandchild would hold our stderr pipe open for 30s.
+		if d := time.Since(begin); d > 3*time.Second {
+			t.Fatalf("graceful stop took %v — the grandchild outlived the command", d)
+		}
+		mustContain(t, errb.String(), "SIGTERM — stopping after the running command")
+		waitFor(t, func() bool { return !alive() })
+
+		// escalation: a command that ignores SIGTERM is killed by the second signal
+		os.Remove(pidFile)
+		m.mu.Lock()
+		m.items[keyA] = true
+		m.mu.Unlock()
+		os.Remove(filepath.Join(home, "config", "listen", "alpha.json"))
+		cmd, errb = start(fmt.Sprintf(`trap '' TERM; sleep 30 & echo $! > %s; wait; sleep 30`, pidFile))
+		cmd.Process.Signal(syscall.SIGTERM)
+		time.Sleep(300 * time.Millisecond)
+		if !alive() {
+			t.Fatal("the command should have ignored the first SIGTERM")
+		}
+		begin = time.Now()
+		cmd.Process.Signal(syscall.SIGTERM)
+		err := cmd.Wait()
+		if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 130 {
+			t.Fatalf("exit %v, want 130 (%s)", err, errb.String())
+		}
+		if time.Since(begin) > 3*time.Second {
+			t.Fatal("escalation was not prompt")
+		}
+		mustContain(t, errb.String(), "SIGTERM again — killing the running command")
+		waitFor(t, func() bool { return !alive() })
+	})
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
