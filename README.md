@@ -10,14 +10,14 @@ and `--field` for a single value.
 ## Install
 
 ```sh
-curl -fsSL https://groundcontrol.makerslab.ai/install.sh | sh
+curl -fsSL https://github.com/MakersLab-ai/groundcontrol-toolkit/releases/latest/download/install.sh | sh
 ```
 
-- macOS and Linux, arm64 and x64. The binary is self-contained, so it needs no Node or Bun on the machine.
+- macOS and Linux, arm64 and amd64. `gc` is a single static Go binary (about 7 MB) with no runtime to install.
 - It goes into `~/.local/bin` (`--install-dir <dir>` or `GC_INSTALL_DIR` to change), together with the alias
   `groundcontrol`, because oh-my-zsh aliases `gc` to `git commit`.
-- The SHA-256 is checked against the release's `checksums.txt`.
-- Pin a version with `sh -s -- --version 0.1.0`. To update, run the installer again.
+- The SHA-256 is checked against the release's `checksums.txt`; a mismatch installs nothing.
+- Pin a version with `sh -s -- --version 0.2.0`. To update, run the installer again.
 
 ## Connect
 
@@ -31,19 +31,25 @@ gc context                           # who am I, which workspace, my open tasks
 ```
 
 - The key is checked against the server, then saved as a **profile** named after the workspace in
-  `~/.config/groundcontrol/config.json`. The directory is 0700 and the file 0600.
+  `~/.config/groundcontrol/config.json` (also on macOS). The directory is 0700 and the file 0600.
 - Several workspaces are several profiles: `gc profiles`, `gc profiles use <name>`, `--profile <name>`.
-- Precedence: `--token` > `GC_API_KEY` > profile (`--profile` > `GC_PROFILE` > current).
-- `GC_CONFIG_DIR` overrides the config directory.
+- Key precedence: `--token` > `GC_API_KEY` > profile (`--profile` > `GC_PROFILE` > current).
+  URL: `--api-url` > `GC_API_URL` > profile > production.
+- `GC_CONFIG_DIR` overrides the config directory (else `$XDG_CONFIG_HOME/groundcontrol`).
+- `gc` never prints a key; it shows `gc_live_…abcd` at most.
 
-**Not connected** means no key, or a key the server rejects (401). Then every command exits with **3** and
-prints how to connect.
+## Exit codes
 
-Exit codes: `0` ok · `1` API or other error · `2` usage error · `3` not connected.
+| Code | Meaning |
+| --- | --- |
+| `0` | ok |
+| `1` | API or other error (`GROUNDCONTROL API error <status>: <message>`) |
+| `2` | usage error: unknown command or flag, missing argument |
+| `3` | not connected: no key, or the server rejected it (401). Prints how to connect. |
 
 ## Commands
 
-`gc help` lists them, and `gc help <command>` shows flags and examples.
+`gc help` lists them, and `gc help <command>` (or `gc <command> --help`) shows flags and examples.
 
 | | |
 | --- | --- |
@@ -51,9 +57,15 @@ Exit codes: `0` ok · `1` API or other error · `2` usage error · `3` not conne
 | Work | `tasks list\|get\|create\|update`, `comment`, `attach`, `docs …`, `search`, `semantic-search`, `initiatives …`, `members`, `goals …`, `tables …` (datasheets), `journal …` |
 | Setup | `profiles`, `skills list\|install`, `version` |
 
-Global flags: `--json`, `--field <path>`, `--profile`, `--token`, `--api-url`, and `--session-id`
-(`GC_SESSION_ID`, which shows the "working" badge on the task). Markdown bodies are passed through stdin:
-`gc comment <id> --body-file - < result.md`.
+Global flags work anywhere on the line: `--json`, `--field <path>`, `--profile`, `--token`, `--api-url`, and
+`--session-id` (`GC_SESSION_ID`, which shows the "working" badge on the task). Markdown bodies come through
+stdin:
+
+```sh
+gc tasks get <task-id> --since 2h
+gc comment <task-id> --body-file - < result.md
+gc tasks update <task-id> --status review
+```
 
 ## Polling and listening
 
@@ -61,20 +73,24 @@ GROUNDCONTROL's `/changes` feed is cursor-based, and **reading never consumes an
 
 - `gc changes --since 2h` reads a window.
 - `gc changes --cursor-file <path>` keeps a cursor that belongs to that one poller. The cursor written back
-  is the server's (`meta.cursor`), never the local clock.
+  is the server's (`meta.cursor`), never the local clock, and only after the output was printed.
 - `gc listen` is the long-running listener, the successor of the OpenClaw plugin's `gc-worker.sh`. It keeps
   **one cursor per workspace** that only the listener uses, under `<config dir>/listen/`.
 
 ```sh
 gc listen --all-profiles --exec 'claude -p "Run gc changes --since $GC_LISTEN_SINCE and handle it"'
-gc listen --once --all-profiles --exec "openclaw cron run <id>"   # from cron/launchd
+gc listen --once --all-profiles --exec "openclaw cron run <id>"
 ```
 
-`--exec` runs once per batch and waits. It receives these environment variables:
+`--exec` runs once per batch via `sh -c` and waits for it. It receives:
 
 - `GC_PROFILE`, `GC_API_KEY`, `GC_API_URL`: bound to that workspace.
 - `GC_LISTEN_SINCE`: the old cursor, so the session sees the same items.
-- `GC_LISTEN_COUNT` and `GC_LISTEN_CHANGES_FILE`.
+- `GC_LISTEN_COUNT` and `GC_LISTEN_CHANGES_FILE` (the `/changes` response as JSON).
+
+The cursor advances once the command has started, even if it exits non-zero. A failing poll backs off up to
+5 minutes; SIGINT/SIGTERM stop cleanly. A rejected key on one profile is logged and the others continue; on
+every profile, `gc listen` exits 3.
 
 ## Skills
 
@@ -84,39 +100,62 @@ gc listen --once --all-profiles --exec "openclaw cron run <id>"   # from cron/la
 | `groundcontrol-datasheets` | Datasheets (user-defined tables): rows keyed by field id, select values are option ids |
 
 Install them with `gc skills install` (`--agent claude|codex|openclaw|all`, `--dir`, `--force` after an update).
+They are compiled into the binary, so the installed skills always match the `gc` that installed them.
 `npx skills add MakersLab-ai/groundcontrol-toolkit -g` works too.
 
 The skills are a deliberately thin bootstrap. **The know-how is served by GROUNDCONTROL itself**: `gc guide`
-lists the topics (`start`, `tasks`, `docs`, `datasheets`, `goals`, `coding`). When agent behaviour changes,
-that change ships with a server deploy, not with a skill or binary update.
+lists the topics (`start`, `tasks`, `docs`, `datasheets`, `goals`, `coding`), and the guide works without a
+key. When agent behaviour changes, that change ships with a server deploy, not with a skill or binary update.
 
 ## Development
 
+Go 1.26, standard library plus `golang.org/x/term` (the hidden key prompt).
+
 ```sh
-npx bun install
-npx bun run src/main.ts context     # run from source
-npx bun test                        # unit + mock-API e2e + listen + drift
-npx tsc --noEmit
-node scripts/build.mjs --targets darwin-arm64
+go run ./cmd/gc context        # run from source
+go test ./...                  # unit tests + the built binary against a mock API (e2e, listen)
+go vet ./...
+sh scripts/validate-skills.sh  # skill frontmatter
+go build -o gc ./cmd/gc
 ```
 
-- **`src/client.ts` / `src/redact.ts` are verbatim copies** of the GROUNDCONTROL repo's
-  `claude-code-plugin/server/src/`. The same client serves the Claude Code plugin and the hosted MCP server.
-  Change it there, then run `scripts/sync-client.sh`. `scripts/sync-client.sh --check` diffs the copies.
-- **Drift guard:** `test/guide-drift.test.ts` checks every `gc …` snippet in the skills and in the **live**
-  server guide (`GC_GUIDE_URL`, default production; `off` to skip) against the command table, flags included.
-  CI also runs it daily, because the guide deploys independently of this repo.
-- The release binaries do **not** autoload `.env`. A compiled Bun binary does so by default, and a project's
-  `GC_API_KEY` would then silently override the saved profile.
+| Path | |
+| --- | --- |
+| `cmd/gc` | `main` (stdio, TTY prompt, signals) and the end-to-end tests |
+| `internal/cli` | command table, argument parser, help, every command |
+| `internal/api` | HTTP client for `/api/v1` |
+| `internal/config` | profiles, `config.json`, key/URL precedence |
+| `internal/output` | text / `--json` / `--field` output and formatters |
+| `internal/js` | ordered JSON and the JavaScript-style value rules the output formats were defined with |
+| `skills.go` | embeds `skills/*/SKILL.md` into the binary |
+
+- The contract with GROUNDCONTROL is its HTTP API (`public/openapi.yaml` in the groundcontrol repo) and the
+  agent guide. There is no shared client code to keep in sync.
+- `internal/cli/snippets_test.go` checks that every `gc …` snippet in the skills and in this README names an
+  existing command and only flags that command knows.
 
 ## Releasing
 
-1. Bump `version` in `package.json`.
-2. Push tag `v<version>`. `release.yml` checks the tag against `package.json`, tests, and builds the four
-   targets. The darwin binaries are built on macOS and ad-hoc signed before packing, because macOS kills
-   unsigned arm64 binaries. It then creates the GitHub release with the tarballs, `checksums.txt` and
-   `install.sh`. PRs run the same build as a dry run.
+Push a tag `v<version>` on `main`:
 
-`https://groundcontrol.makerslab.ai/install.sh` and the binary downloads are served by GROUNDCONTROL's
-`/api/cli/download/<asset>` route. It resolves the newest `v*` release here and redirects to GitHub's asset
-URL, using a server-side token (`GC_CLI_RELEASE_TOKEN`) while this repo is private.
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`release.yml` vets and tests, then runs [goreleaser](https://goreleaser.com) (`.goreleaser.yaml`). It builds
+darwin/linux × amd64/arm64 with `CGO_ENABLED=0` and the version from the tag, packs `gc_<os>_<arch>.tar.gz`, and
+writes `checksums.txt`. It then creates the GitHub release with `install.sh` attached. Go's linker ad-hoc signs
+darwin/arm64 binaries itself, so there is no separate signing step. CI runs `goreleaser check` and a snapshot
+build on every PR. To try it locally:
+
+```sh
+goreleaser check
+goreleaser release --snapshot --clean     # dist/
+```
+
+Test `install.sh` against a local build by pointing `GC_INSTALL_BASE` at a directory URL holding the assets:
+
+```sh
+(cd dist && python3 -m http.server 8000) &
+GC_INSTALL_BASE=http://127.0.0.1:8000 GC_INSTALL_DIR=/tmp/gc-bin sh install.sh
+```

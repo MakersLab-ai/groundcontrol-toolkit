@@ -1,17 +1,20 @@
 #!/bin/sh
 # GROUNDCONTROL CLI installer.
 #
-#   curl -fsSL https://groundcontrol.makerslab.ai/install.sh | sh
-#   curl -fsSL https://groundcontrol.makerslab.ai/install.sh | sh -s -- --version 0.1.0
-#   curl -fsSL https://groundcontrol.makerslab.ai/install.sh | sh -s -- --install-dir /usr/local/bin
+#   curl -fsSL https://github.com/MakersLab-ai/groundcontrol-toolkit/releases/latest/download/install.sh | sh
+#   … | sh -s -- --version 0.2.0
+#   … | sh -s -- --install-dir /usr/local/bin
 #
-# Downloads gc for this OS/arch, verifies its SHA-256 against checksums.txt,
-# installs it to ~/.local/bin (or --install-dir / $GC_INSTALL_DIR) and links
-# `groundcontrol` -> `gc` (oh-my-zsh aliases `gc` to `git commit`).
-# Updating = running this again.
+# Downloads gc for this OS/arch from the GitHub release, verifies its SHA-256
+# against the release's checksums.txt, installs it to ~/.local/bin (or
+# --install-dir / $GC_INSTALL_DIR) and links `groundcontrol` -> `gc`
+# (oh-my-zsh aliases `gc` to `git commit`). Updating = running this again.
+#
+# GC_INSTALL_BASE overrides where the assets come from: a URL of a directory
+# that holds gc_<os>_<arch>.tar.gz and checksums.txt (used for testing).
 set -eu
 
-BASE="${GC_INSTALL_BASE:-https://groundcontrol.makerslab.ai}"
+REPO="MakersLab-ai/groundcontrol-toolkit"
 INSTALL_DIR="${GC_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION=""
 
@@ -26,11 +29,12 @@ while [ $# -gt 0 ]; do
     --install-dir=*) INSTALL_DIR="${1#*=}"; shift ;;
     -h|--help)
       say "Usage: install.sh [--version X.Y.Z] [--install-dir DIR]"
-      say "Env: GC_INSTALL_DIR (default ~/.local/bin), GC_INSTALL_BASE (default https://groundcontrol.makerslab.ai)"
+      say "Env: GC_INSTALL_DIR (default ~/.local/bin), GC_INSTALL_BASE (a directory URL holding the release assets)"
       exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
 done
+VERSION="${VERSION#v}"
 
 case "$(uname -s)" in
   Darwin) OS=darwin ;;
@@ -44,8 +48,13 @@ case "$(uname -m)" in
 esac
 
 ASSET="gc_${OS}_${ARCH}.tar.gz"
-QUERY=""
-[ -n "$VERSION" ] && QUERY="?version=$VERSION"
+if [ -n "${GC_INSTALL_BASE:-}" ]; then
+  BASE="${GC_INSTALL_BASE%/}"
+elif [ -n "$VERSION" ]; then
+  BASE="https://github.com/$REPO/releases/download/v$VERSION"
+else
+  BASE="https://github.com/$REPO/releases/latest/download"
+fi
 
 if command -v curl >/dev/null 2>&1; then
   fetch() { curl -fsSL --retry 2 -o "$2" "$1"; }
@@ -68,8 +77,8 @@ trap 'rm -rf "$TMP"' EXIT
 trap 'exit 130' INT TERM
 
 say "Downloading $ASSET${VERSION:+ (version $VERSION)}…"
-fetch "$BASE/api/cli/download/$ASSET$QUERY" "$TMP/$ASSET" || die "download failed: $BASE/api/cli/download/$ASSET$QUERY"
-fetch "$BASE/api/cli/download/checksums.txt$QUERY" "$TMP/checksums.txt" || die "download failed: checksums.txt"
+fetch "$BASE/$ASSET" "$TMP/$ASSET" || die "download failed: $BASE/$ASSET"
+fetch "$BASE/checksums.txt" "$TMP/checksums.txt" || die "download failed: $BASE/checksums.txt"
 
 EXPECTED="$(awk -v f="$ASSET" '$2 == f || $2 == "*"f {print $1}' "$TMP/checksums.txt")"
 [ -n "$EXPECTED" ] || die "checksums.txt has no entry for $ASSET"
