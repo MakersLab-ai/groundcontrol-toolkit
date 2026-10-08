@@ -254,7 +254,7 @@ func tableCommands() []*Command {
 		},
 		{
 			Path:    []string{"tables", "update"},
-			Summary: "Rename, re-describe or move a datasheet (creator/owner/admin)",
+			Summary: "Rename, re-describe or move a datasheet",
 			Args:    "<table-id>",
 			MinArgs: 1,
 			MaxArgs: 1,
@@ -282,7 +282,7 @@ func tableCommands() []*Command {
 		},
 		{
 			Path:     []string{"tables", "delete"},
-			Summary:  "Delete a datasheet with all rows and comments — irreversible (needs --yes)",
+			Summary:  "Delete a datasheet with all rows and comments — irreversible (needs --yes; creator/owner/admin)",
 			Args:     "<table-id>",
 			MinArgs:  1,
 			MaxArgs:  1,
