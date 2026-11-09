@@ -30,3 +30,6 @@
 - **Version pinning:** the version comes only from the git tag (`-X main.version=…` via goreleaser); there is
   no version file. Release = tag `v<version>` on main (`release.yml` → goreleaser). `install.sh` is a release
   asset. Pin GitHub Actions by commit SHA.
+- **`gc setup openclaw` touches a live gateway.** Tests never run a real `openclaw` or `launchctl`: the setup tests
+  use the test binary behind `openclaw`/`launchctl` symlinks (`internal/cli/setup_test.go`), and the e2e `runGc`
+  sets `GC_OPENCLAW_BIN=/nonexistent/openclaw` because `gc onboarding` runs the setup whenever it finds openclaw.
