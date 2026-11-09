@@ -126,6 +126,12 @@ The cursor advances once the command has started, even if it exits non-zero. A f
 
 Install them with `gc skills install` (`--agent claude|codex|openclaw|all`, `--dir`, `--force` after an update).
 They are compiled into the binary, so the installed skills always match the `gc` that installed them.
+
+A skill can carry a **per-agent variant**, `skills/<name>/SKILL.<agent>.md`. It is installed for that agent
+under the same skill name instead of the generic `SKILL.md` (`gc skills list` shows which exist; with `--dir`,
+`--agent <name>` picks the variant). `groundcontrol` has an OpenClaw variant: `gc` is preinstalled there, exit 3
+is never relayed raw to the user, worker runs end with `GC_OK`, delayed requests go through `openclaw cron add`.
+Variants fall under the same size cap, frontmatter check and snippet pinning as the skills themselves.
 `npx skills add MakersLab-ai/groundcontrol-toolkit -g` works too.
 
 The skills are a deliberately thin bootstrap. **The know-how is served by GROUNDCONTROL itself**: `gc guide`
@@ -152,7 +158,7 @@ go build -o gc ./cmd/gc
 | `internal/config` | profiles, `config.json`, key/URL precedence |
 | `internal/output` | text / `--json` / `--field` output and formatters |
 | `internal/js` | ordered JSON and the JavaScript-style value rules the output formats were defined with |
-| `skills.go` | embeds `skills/*/SKILL.md` into the binary |
+| `skills.go` | embeds `skills/*/SKILL.md` and the per-agent `SKILL.<agent>.md` variants into the binary |
 
 - The contract with GROUNDCONTROL is its HTTP API (`public/openapi.yaml` in the groundcontrol repo) and the
   agent guide. There is no shared client code to keep in sync.

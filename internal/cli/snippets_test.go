@@ -1,6 +1,6 @@
 package cli
 
-// The texts agents read — the skills and the README — name `gc` commands and
+// The texts agents read — the skills (and their per-agent variants) and the README — name `gc` commands and
 // flags. A renamed command or flag would leave them following instructions
 // that exit 2, so every `gc …` snippet in them must name an existing command
 // and only flags that command (or the global set) knows. Purely repo-internal:
@@ -105,8 +105,10 @@ func checkSnippet(s string) string {
 
 func TestSnippetsNameRealCommandsAndFlags(t *testing.T) {
 	files, _ := filepath.Glob(filepath.Join("..", "..", "skills", "*", "SKILL.md"))
+	variants, _ := filepath.Glob(filepath.Join("..", "..", "skills", "*", "SKILL.*.md"))
+	files = append(files, variants...)
 	files = append(files, filepath.Join("..", "..", "README.md"))
-	if len(files) < 3 {
+	if len(files) < 4 {
 		t.Fatalf("found only %v", files)
 	}
 	for _, f := range files {
