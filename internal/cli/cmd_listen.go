@@ -9,8 +9,6 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -214,12 +212,7 @@ func resolveTargets(c *Ctx) ([]listenTarget, error) {
 		return nil, err
 	}
 	// A key from --token/GC_API_KEY gets its own cursor, named by a hash (never the key itself).
-	isProfile := a.KeySource == "profile" && a.Profile != ""
-	name := a.Profile
-	if !isProfile {
-		sum := sha256.Sum256([]byte(key))
-		name = "key-" + hex.EncodeToString(sum[:])[:12]
-	}
+	name, isProfile := workspaceSlot(a, key)
 	return []listenTarget{{name: name, isProfile: isProfile, apiURL: a.APIURL, apiKey: key}}, nil
 }
 
