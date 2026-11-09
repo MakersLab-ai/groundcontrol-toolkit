@@ -101,6 +101,10 @@ gc listen --once --all-profiles --exec "openclaw cron run <id>"
 - `GC_LISTEN_SINCE`: the old cursor, so the session sees the same items.
 - `GC_LISTEN_COUNT` and `GC_LISTEN_CHANGES_FILE` (the `/changes` response as JSON).
 
+`--kinds task_comments,tasks_updated,…` limits what counts to those `/changes` arrays: other items print
+nothing and wake nothing. The cursor still advances on a poll whose items were all filtered out, so those items
+are not delivered later. `gc help listen` lists the OpenClaw worker set.
+
 The cursor advances once the command has started, even if it exits non-zero. A failing poll backs off up to
 5 minutes, and a request times out after 30 seconds.
 

@@ -230,6 +230,43 @@ func TestListen(t *testing.T) {
 		mustNotContain(t, r.err, keyA)
 	})
 
+	t.Run("--kinds: only those arrays print and wake; an all-filtered poll still advances the cursor", func(t *testing.T) {
+		home := listenCase(t, m)
+		r := runGc(t, home, []string{"listen", "--once", "--json", "--since", "2026-10-02T10:00:00Z", "--kinds", "task_comments, goal_checkins"}, nil, nil)
+		if r.code != 0 {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+		if lines := strings.Split(strings.TrimSpace(r.out), "\n"); len(lines) != 1 || !strings.Contains(lines[0], `"kind":"task_comments"`) {
+			t.Fatalf("out %q", r.out)
+		}
+		mustContain(t, r.err, "1 changes (task_comments 1)")
+
+		home = listenCase(t, m)
+		out := filepath.Join(home, "ran")
+		r = runGc(t, home, []string{"listen", "--once", "--since", "2026-10-02T10:00:00Z", "--kinds", "doc_comments", "--exec", "touch " + out}, nil, nil)
+		if r.code != 0 {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+		if _, err := os.Stat(out); err == nil {
+			t.Fatal("exec ran although every item was of another kind")
+		}
+		mustContain(t, r.err, "0 changes (3 of other kinds ignored by --kinds)")
+		if c := cursorOf(t, home, "alpha"); c != listenCursors[keyA] {
+			t.Fatalf("cursor %q not advanced", c)
+		}
+
+		home = listenCase(t, m)
+		r = runGc(t, home, []string{"listen", "--once", "--since", "2026-10-02T10:00:00Z", "--kinds", "tasks_updated", "--exec", `printf %s "$GC_LISTEN_COUNT" > ` + out}, nil, nil)
+		if b, _ := os.ReadFile(out); string(b) != "1" {
+			t.Fatalf("GC_LISTEN_COUNT %q (%s)", b, r.err)
+		}
+		for _, bad := range []string{"", "Task-Comments", ","} {
+			if r := runGc(t, home, []string{"listen", "--once", "--kinds", bad}, nil, nil); r.code != 2 {
+				t.Fatalf("--kinds %q: code %d", bad, r.code)
+			}
+		}
+	})
+
 	t.Run("a key from GC_API_KEY gets a hashed cursor name and no GC_PROFILE in the exec env", func(t *testing.T) {
 		home := listenCase(t, m)
 		out := filepath.Join(home, "p.txt")
