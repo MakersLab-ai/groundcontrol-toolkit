@@ -75,6 +75,17 @@ func isPlaceholder(w string) bool {
 
 func checkSnippet(s string) string {
 	words := strings.Fields(s)[1:]
+	// Global flags may come before the command: `gc --profile <p> changes …`.
+	for len(words) > 0 && strings.HasPrefix(words[0], "--") {
+		o, ok := globalOption(strings.TrimPrefix(words[0], "--"))
+		if !ok || o.Name == "help" {
+			break
+		}
+		words = words[1:]
+		if !o.Bool && len(words) > 0 {
+			words = words[1:]
+		}
+	}
 	if len(words) == 0 || isPlaceholder(words[0]) {
 		return ""
 	}
@@ -140,7 +151,10 @@ func TestSnippetCheckerCatchesDrift(t *testing.T) {
 			t.Fatalf("%q → %q, want %q", s, got, want)
 		}
 	}
-	for _, ok := range []string{"gc tables …", "gc tasks get <id> --since 2h --json", "gc help tasks create", "gc profiles use acme", `gc listen --exec 'x --whatever'`} {
+	if got := checkSnippet("gc --profile acme tasks list --bogus"); got != "--bogus is not a flag of gc tasks list" {
+		t.Fatalf("leading global flag: %q", got)
+	}
+	for _, ok := range []string{"gc --profile <p>", "gc --profile acme changes --cursor-file x", "gc tables …", "gc tasks get <id> --since 2h --json", "gc help tasks create", "gc profiles use acme", `gc listen --exec 'x --whatever'`} {
 		if got := checkSnippet(ok); got != "" {
 			t.Fatalf("%q → %q", ok, got)
 		}

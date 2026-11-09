@@ -46,7 +46,9 @@ type result struct {
 func runGc(t *testing.T, home string, args []string, stdin *string, extra map[string]string) result {
 	t.Helper()
 	cmd := exec.Command(gcBin, args...)
-	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GC_CONFIG_DIR=" + filepath.Join(home, "config")}
+	// GC_OPENCLAW_BIN points nowhere: a real openclaw on the developer's PATH
+	// must never be touched (onboarding runs gc setup openclaw when it finds one).
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GC_CONFIG_DIR=" + filepath.Join(home, "config"), "GC_OPENCLAW_BIN=/nonexistent/openclaw"}
 	for k, v := range extra {
 		env = append(env, k+"="+v)
 	}

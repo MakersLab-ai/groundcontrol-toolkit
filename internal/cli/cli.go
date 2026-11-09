@@ -31,6 +31,7 @@ func init() {
 		journalCommands(),
 		guideCommands(),
 		skillCommands(),
+		setupCommands(),
 		[]*Command{versionCommand()},
 	)
 }
@@ -62,6 +63,7 @@ var groupSummary = map[string]string{
 	"tables":      "Datasheets: list, get, rows, add-rows, update-rows, … (gc tables --help)",
 	"journal":     "Journal: list, get, summary",
 	"skills":      "Agent skills: list, install",
+	"setup":       "Host integration: openclaw (crons, skill, listener), openclaw-wake",
 	"profiles":    "Saved workspaces: list, use, remove",
 }
 
@@ -71,7 +73,7 @@ var sections = []struct {
 }{
 	{"Start", []string{"onboarding", "context", "changes", "listen", "guide"}},
 	{"Work", []string{"tasks", "comment", "attach", "docs", "search", "semantic-search", "initiatives", "members", "goals", "tables", "journal"}},
-	{"Setup", []string{"profiles", "skills", "version", "help"}},
+	{"Setup", []string{"profiles", "skills", "setup", "version", "help"}},
 }
 
 func isGroup(word string) bool {
@@ -409,7 +411,7 @@ func mainHelp(version string) string {
 		"  gc comment <id> --body-file - < result.md",
 		"  gc guide tasks",
 		"",
-		"Environment: GC_API_KEY, GC_API_URL, GC_PROFILE, GC_SESSION_ID, GC_CONFIG_DIR",
+		"Environment: GC_API_KEY, GC_API_URL, GC_PROFILE, GC_SESSION_ID, GC_CONFIG_DIR, GC_OPENCLAW_BIN",
 		"",
 		"Exit codes: 0 ok · 1 API or other error · 2 usage error · 3 not connected (no API key, or the key was rejected)",
 	)
