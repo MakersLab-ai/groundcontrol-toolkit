@@ -635,8 +635,11 @@ func planSetup(c *Ctx, oc openclaw, ocConfig any) ([]*setupAction, error) {
 				continue
 			}
 			id := j.id
-			actions = append(actions, &setupAction{item: item, status: "update", detail: "message replaced (gc prompt), enabled state kept", apply: func() error {
-				_, err := oc.run("cron", "edit", id, "--message", msg)
+			// --no-deliver too: the plugin created these without a delivery
+			// flag, i.e. announce/last, and the gc prompt ends on a GC_OK line
+			// — kept as announce, the user would get "GC_OK" every night.
+			actions = append(actions, &setupAction{item: item, status: "update", detail: "message replaced (gc prompt), delivery off, enabled state kept", apply: func() error {
+				_, err := oc.run("cron", "edit", id, "--message", msg, "--no-deliver")
 				return err
 			}})
 			continue

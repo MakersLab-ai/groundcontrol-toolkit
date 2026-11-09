@@ -114,6 +114,12 @@ func fakeOpenclaw(args []string) int {
 				if m, ok := flags["--message"]; ok {
 					st.Jobs[i].Payload["message"] = m
 				}
+				if bools["--no-deliver"] {
+					if st.Jobs[i].Delivery == nil {
+						st.Jobs[i].Delivery = map[string]any{}
+					}
+					st.Jobs[i].Delivery["mode"] = "none"
+				}
 			}
 		}
 		save()
@@ -399,6 +405,10 @@ func TestSetupOpenclawInheritsFromLegacySpawnPerProfile(t *testing.T) {
 	j := h.job("gc-journal")
 	if !strings.Contains(j.Payload["message"].(string), "gc --profile <profil> journal summary") || !j.Enabled {
 		t.Fatalf("journal %v", j)
+	}
+	// …and stops announcing: the gc prompt ends on GC_OK, which must not reach the user nightly.
+	if j.Delivery == nil || j.Delivery["mode"] != "none" {
+		t.Fatalf("repaired journal still delivers: %v", j.Delivery)
 	}
 	if h.job("gc-initiative-summaries").Payload["message"] != "gc initiatives list …" {
 		t.Fatal("a gc-era summary cron was rewritten")
