@@ -238,6 +238,8 @@ func newMockAPI() *mockAPI {
 			writeJSON(w, 201, `{"data":`+merge(map[string]any{"id": "i1", "visibility": "private"})+`}`)
 		case p == "/initiatives/i1" && r.Method == "PATCH":
 			writeJSON(w, 200, `{"data":`+merge(map[string]any{"id": "i1", "name": "Core", "visibility": "public"})+`}`)
+		case p == "/tasks/"+taskID+"/asks" && r.Method == "POST":
+			writeJSON(w, 201, `{"data":`+merge(map[string]any{"id": "ask1", "task_id": taskID, "event_type": "ask", "ask_to_member_id": "h1", "ask_status": "open"})+`}`)
 		case p == "/changes":
 			meta := fmt.Sprintf(`"meta":{"since":%q,"checked_at":%q`, r.URL.Query().Get("since"), checkedAt)
 			if cursor != "" {
@@ -616,6 +618,48 @@ func TestE2E(t *testing.T) {
 		if r := gc([]string{"initiatives", "update", "i1", "--summary", "a", "--summary-file", f}, nil, nil); r.code != 2 {
 			t.Fatalf("inline + file: code %d", r.code)
 		}
+	})
+
+	t.Run("tasks ask: JSON from stdin, --to/--content override, local check only for questions", func(t *testing.T) {
+		ask := `{"content":"Two ways:","to":"h0","questions":[{"prompt":"Which one?","options":[{"label":"Today"},{"label":"Friday"}]}]}`
+		r := gc([]string{"tasks", "ask", taskID, "--body-file", "-", "--to", "h1"}, strp(ask), nil)
+		if r.code != 0 {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+		req := api.lastMethod("POST")
+		if req.path != "/api/v1/tasks/"+taskID+"/asks" {
+			t.Fatalf("path %s", req.path)
+		}
+		b := req.body.(map[string]any)
+		if b["to"] != "h1" || b["content"] != "Two ways:" || len(b["questions"].([]any)) != 1 {
+			t.Fatalf("body %v", b)
+		}
+		mustContain(t, r.out, "asked ask1 on "+taskID+" (1 question(s) to h1)")
+		f := filepath.Join(home, "ask.json")
+		os.WriteFile(f, []byte(`{"questions":[{"prompt":"Go?","options":[{"label":"Yes"}]}]}`), 0o644)
+		r = gc([]string{"tasks", "ask", taskID, "--body-file", f, "--content-file", "-"}, strp("Context **md**"), nil)
+		if r.code != 0 {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+		if got, _ := json.Marshal(api.lastMethod("POST").body); string(got) != `{"content":"Context **md**","questions":[{"options":[{"label":"Yes"}],"prompt":"Go?"}]}` {
+			t.Fatalf("body %s", got)
+		}
+		for _, bad := range []string{`{"questions":[]}`, `[1]`, `nope`, `{"content":"x"}`} {
+			if r := gc([]string{"tasks", "ask", taskID, "--body-file", "-"}, strp(bad), nil); r.code != 2 {
+				t.Fatalf("%s: code %d", bad, r.code)
+			}
+		}
+		if r := gc([]string{"tasks", "ask", taskID, "--content", "x"}, nil, nil); r.code != 2 {
+			t.Fatalf("no body file: code %d", r.code)
+		}
+		if r := gc([]string{"tasks", "ask", taskID, "--body-file", "-", "--content-file", "-"}, strp(ask), nil); r.code != 2 {
+			t.Fatalf("two stdin flags: code %d", r.code)
+		}
+		r = gc([]string{"tasks", "ask", "does-not-exist", "--body-file", f}, nil, nil)
+		if r.code != 1 {
+			t.Fatalf("404: code %d", r.code)
+		}
+		mustContain(t, r.err, "the Desk (asks) is off")
 	})
 
 	t.Run("global flags anywhere: before the command and after positionals", func(t *testing.T) {
