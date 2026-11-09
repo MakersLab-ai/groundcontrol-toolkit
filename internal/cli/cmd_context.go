@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -113,10 +112,11 @@ func contextCommands() []*Command {
 			Summary: "What changed for me since a point in time (comments, tasks, docs, datasheets, goal check-ins)",
 			Options: []OptSpec{
 				{Name: "since", Value: "<iso|15m|2h|1d>", Desc: "Start of the window (default: the cursor file, else 1h)"},
-				{Name: "cursor-file", Value: "<path>", Desc: `Read "since" from this file and write the new cursor back after a successful call`},
+				{Name: "cursor-file", Value: "<path>", Desc: `Read "since" from this file and write the new cursor back after a successful call (one entry per workspace)`},
 			},
 			Details: strings.Join([]string{
 				"There is no implicit stored cursor: every poller owns its own --cursor-file, or passes --since.",
+				"The file keeps one cursor per workspace (profile), so a poller with several profiles can pass the same file for each.",
 				"Items marked [principal] concern the human you assist — do not start them, tell them in the session.",
 			}, "\n"),
 			Examples: []string{"gc changes --since 2h", "gc changes --cursor-file .gc-cursor", "gc changes --since 2026-10-02T06:00:00Z --json"},
@@ -168,28 +168,43 @@ func contextCommands() []*Command {
 func runChanges(c *Ctx) error {
 	cursorFile, hasCursor := c.str("cursor-file")
 	sinceFlag, hasSince := c.str("since")
+
+	// The workspace decides which entry of the cursor file is ours, so resolve
+	// the key before reading it.
+	a, err := c.Auth()
+	if err != nil {
+		return err
+	}
+	key, err := config.RequireKey(a)
+	if err != nil {
+		return err
+	}
+	slot, _ := workspaceSlot(a, key)
+
 	var since string
-	var err error
 	switch {
 	case hasSince:
 		since, err = parseSince(sinceFlag, time.Now())
 		if err != nil {
 			return err
 		}
-	case hasCursor && fileExists(cursorFile):
-		b, rerr := os.ReadFile(cursorFile)
-		if rerr != nil {
-			return clierr.New(fmt.Sprintf("Cannot read %s: %s", cursorFile, rerr))
-		}
-		raw := strings.TrimSpace(string(b))
-		since, err = parseSince(raw, time.Now())
-		if err != nil {
-			return clierr.New(fmt.Sprintf("Cursor file %s does not hold a timestamp (\"%s\").", cursorFile, output.OneLine(raw, 40)), "Pass --since to reset it.")
-		}
 	default:
+		raw := ""
+		if hasCursor {
+			if raw, err = readCursorFile(cursorFile, slot); err != nil {
+				return err
+			}
+		}
+		if raw != "" {
+			since, err = parseSince(raw, time.Now())
+			if err != nil {
+				return clierr.New(fmt.Sprintf("Cursor file %s does not hold a timestamp for %s (\"%s\").", cursorFile, slot, output.OneLine(raw, 40)), "Pass --since to reset it.")
+			}
+			break
+		}
 		since, _ = parseSince("1h", time.Now())
 		if hasCursor {
-			c.Out.Err(fmt.Sprintf("note: %s does not exist yet — using the last hour.", cursorFile))
+			c.Out.Err(fmt.Sprintf("note: %s has no cursor for %s yet — using the last hour.", cursorFile, slot))
 		}
 	}
 
@@ -216,10 +231,7 @@ func runChanges(c *Ctx) error {
 		return err
 	}
 	if hasCursor {
-		if err := os.MkdirAll(filepath.Dir(cursorFile), 0o777); err != nil {
-			return err
-		}
-		return config.AtomicWrite(cursorFile, cursor+"\n", 0o600)
+		return writeCursorFile(cursorFile, slot, cursor)
 	}
 	return nil
 }

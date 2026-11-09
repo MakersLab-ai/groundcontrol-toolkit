@@ -68,6 +68,20 @@ func runGc(t *testing.T, home string, args []string, stdin *string, extra map[st
 
 func strp(s string) *string { return &s }
 
+// cursorEntry reads one workspace's entry from a --cursor-file.
+func cursorEntry(t *testing.T, path, slot string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("cursor file %q: %v", b, err)
+	}
+	return m[slot]
+}
+
 func mustContain(t *testing.T, haystack, needle string) {
 	t.Helper()
 	if !strings.Contains(haystack, needle) {
@@ -396,7 +410,7 @@ func TestE2E(t *testing.T) {
 		if r.code != 0 {
 			t.Fatalf("code %d: %s", r.code, r.err)
 		}
-		mustContain(t, r.err, "does not exist yet")
+		mustContain(t, r.err, "has no cursor for acme-labs yet")
 		mustContain(t, r.out, "Please also add docs")
 		mustContain(t, r.out, "[principal]")
 		mustContain(t, r.out, "do NOT start it")
@@ -404,9 +418,8 @@ func TestE2E(t *testing.T) {
 		if d := since1.Sub(before.Add(-time.Hour)); d > 10*time.Second || d < -10*time.Second {
 			t.Fatalf("since %v is not ~1h ago", since1)
 		}
-		b, _ := os.ReadFile(cursor)
-		if strings.TrimSpace(string(b)) != cursorVal { // meta.cursor, not checked_at, not the local clock
-			t.Fatalf("cursor file %q", b)
+		if got := cursorEntry(t, cursor, "acme-labs"); got != cursorVal { // meta.cursor, not checked_at, not the local clock
+			t.Fatalf("cursor entry %q", got)
 		}
 		if m := fileMode(t, cursor); m != 0o600 {
 			t.Fatalf("cursor mode %o", m)
@@ -425,9 +438,8 @@ func TestE2E(t *testing.T) {
 		api.mu.Lock()
 		api.cursor = cursorVal
 		api.mu.Unlock()
-		b, _ = os.ReadFile(cursor)
-		if strings.TrimSpace(string(b)) != checkedAt {
-			t.Fatalf("cursor file %q, want checked_at", b)
+		if got := cursorEntry(t, cursor, "acme-labs"); got != checkedAt {
+			t.Fatalf("cursor entry %q, want checked_at", got)
 		}
 
 		// --since wins over the file
@@ -435,6 +447,60 @@ func TestE2E(t *testing.T) {
 		if s := api.lastPath("/api/v1/changes").query.Get("since"); s != "2026-10-02T06:00:00.000Z" {
 			t.Fatalf("since %q", s)
 		}
+	})
+
+	t.Run("changes --cursor-file: one entry per workspace, so a shared file never mixes them", func(t *testing.T) {
+		cursor := filepath.Join(home, "state", "cursor-multi")
+		os.MkdirAll(filepath.Dir(cursor), 0o755)
+		os.WriteFile(cursor, []byte(`{"acme-labs":"2026-10-01T00:00:00.000Z"}`+"\n"), 0o600)
+		// A key from GC_API_KEY is a different workspace slot than the profile.
+		other := map[string]string{"GC_API_KEY": key}
+		r := gc([]string{"changes", "--cursor-file", cursor}, nil, other)
+		if r.code != 0 {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+		mustContain(t, r.err, "has no cursor for key-")
+		mustNotContain(t, r.err, key)
+		if s := api.lastPath("/api/v1/changes").query.Get("since"); s == "2026-10-01T00:00:00.000Z" {
+			t.Fatal("the second workspace read the first one's cursor")
+		}
+		if got := cursorEntry(t, cursor, "acme-labs"); got != "2026-10-01T00:00:00.000Z" {
+			t.Fatalf("the second workspace overwrote the first one's cursor: %q", got)
+		}
+		b, _ := os.ReadFile(cursor)
+		mustNotContain(t, string(b), key)
+		// The profile still reads its own entry.
+		gc([]string{"changes", "--cursor-file", cursor}, nil, nil)
+		if s := api.lastPath("/api/v1/changes").query.Get("since"); s != "2026-10-01T00:00:00.000Z" {
+			t.Fatalf("profile since %q", s)
+		}
+		if got := cursorEntry(t, cursor, "acme-labs"); got != cursorVal {
+			t.Fatalf("profile entry %q", got)
+		}
+	})
+
+	t.Run("changes --cursor-file: a bare timestamp (gc ≤ 0.2) is read and upgraded", func(t *testing.T) {
+		cursor := filepath.Join(home, "state", "cursor-legacy")
+		os.WriteFile(cursor, []byte("2026-10-01T05:00:00.000Z\n"), 0o600)
+		if r := gc([]string{"changes", "--cursor-file", cursor}, nil, nil); r.code != 0 {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+		if s := api.lastPath("/api/v1/changes").query.Get("since"); s != "2026-10-01T05:00:00.000Z" {
+			t.Fatalf("since %q", s)
+		}
+		if got := cursorEntry(t, cursor, "acme-labs"); got != cursorVal {
+			t.Fatalf("entry %q", got)
+		}
+	})
+
+	t.Run("changes --cursor-file: a cursor object that is not JSON is an error", func(t *testing.T) {
+		cursor := filepath.Join(home, "state", "cursor-badjson")
+		os.WriteFile(cursor, []byte("{nope\n"), 0o600)
+		r := gc([]string{"changes", "--cursor-file", cursor}, nil, nil)
+		if r.code != 1 {
+			t.Fatalf("code %d", r.code)
+		}
+		mustContain(t, r.err, "is not a cursor object")
 	})
 
 	t.Run("changes --cursor-file: output fails (bad --field) → cursor not advanced", func(t *testing.T) {

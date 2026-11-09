@@ -17,7 +17,7 @@
   (groundcontrol repo `lib/agent-guide/`) in the same change. `internal/cli/snippets_test.go` pins every
   `gc …` snippet in `skills/*/SKILL.md` and `README.md` to the command table.
 - **`/changes` is never consumed by reading.** There is no implicit cursor: use `--since` or a per-poller
-  `--cursor-file`. `gc listen` owns its per-profile cursor (`<config dir>/listen/<name>.json`). The value
+  `--cursor-file`, which keeps one entry per workspace (profile name, or `key-<hash>`). `gc listen` owns its per-profile cursor (`<config dir>/listen/<name>.json`). The value
   written back is the server's `meta.cursor` (fallback `checked_at`), never the client clock. It is written
   only after the output succeeded, and for `--exec` once the command has started.
 - **No key, or a 401 → exit 3** with connect directions, on every command. The fleet relies on this. Usage

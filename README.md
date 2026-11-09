@@ -82,6 +82,11 @@ GROUNDCONTROL's `/changes` feed is cursor-based, and **reading never consumes an
 - `gc changes --since 2h` reads a window.
 - `gc changes --cursor-file <path>` keeps a cursor that belongs to that one poller. The cursor written back
   is the server's (`meta.cursor`), never the local clock, and only after the output was printed.
+- The file keeps **one cursor per workspace**, as `{"<profile>": "<cursor>", …}`. A key from `--token` or
+  `GC_API_KEY` is filed under `key-<hash>`, never the key itself. An agent that works in several workspaces
+  can therefore pass the same file with every `--profile`: one workspace's run never reads or advances
+  another workspace's cursor. A file from gc ≤ 0.2 that holds a bare timestamp is still read. The first
+  write turns it into the object and keeps only the workspace that wrote it.
 - `gc listen` is the long-running listener, the successor of the OpenClaw plugin's `gc-worker.sh`. It keeps
   **one cursor per workspace** that only the listener uses, under `<config dir>/listen/`.
 
