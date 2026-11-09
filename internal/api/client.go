@@ -232,6 +232,12 @@ func (c *Client) ListComments(taskID string) (any, error) {
 	return js.O("data", data, "meta", js.O("total", len(data))), nil
 }
 
+// CreateAsk posts a structured question (a Desk "ask") on a task. The answer
+// arrives later as an ordinary comment.
+func (c *Client) CreateAsk(taskID string, body any) (any, error) {
+	return c.Request("POST", "/tasks/"+seg(taskID)+"/asks", body)
+}
+
 func (c *Client) CreateComment(taskID, body string) (any, error) {
 	return c.Request("POST", "/tasks/"+seg(taskID)+"/comments", js.O("body", body))
 }
@@ -283,6 +289,12 @@ func (c *Client) UploadAttachment(taskID, filePath, fileName string) (any, error
 func (c *Client) GetInitiative(id string) (any, error) { return c.Get("/initiatives/" + seg(id)) }
 func (c *Client) GetInitiativeMemory(id string) (any, error) {
 	return c.Get("/initiatives/" + seg(id) + "/memory")
+}
+func (c *Client) CreateInitiative(body any) (any, error) {
+	return c.Request("POST", "/initiatives", body)
+}
+func (c *Client) UpdateInitiative(id string, body any) (any, error) {
+	return c.Request("PATCH", "/initiatives/"+seg(id), body)
 }
 
 // Goals (API: objectives)

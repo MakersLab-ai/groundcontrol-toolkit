@@ -299,6 +299,101 @@ func initiativeCommands() []*Command {
 			},
 		},
 		{
+			Path:    []string{"initiatives", "create"},
+			Summary: "Create an initiative (public unless you pass --visibility private)",
+			Options: []OptSpec{
+				{Name: "name", Value: "<text>", Desc: "Name (required)"},
+				{Name: "description", Value: "<text>", Desc: "Short description"},
+				{Name: "description-file", Value: "<path|->", Desc: "Read the description from a file, or stdin with -"},
+				{Name: "color", Value: "<#hex>", Desc: "Hex color, e.g. #6366F1"},
+				{Name: "visibility", Value: "<public|private>", Desc: "public (default): the whole workspace; private: members only"},
+				{Name: "default-assignee", Value: "<member-id>", Desc: "New tasks in it go to this member when no assignee is given"},
+			},
+			Details: "Only when someone asked for an initiative — a task without a project is a task without --initiative.",
+			Examples: []string{
+				`gc initiatives create --name "Website relaunch" --color "#6366F1"`,
+				`gc initiatives create --name "Payroll" --visibility private`,
+			},
+			Run: func(c *Ctx) error {
+				name, err := c.requireStr("name")
+				if err != nil {
+					return err
+				}
+				desc, err := c.textInput("description", "description-file")
+				if err != nil {
+					return err
+				}
+				// The API's own default has changed before; say public explicitly.
+				visibility := js.Or(c.sv("visibility"), "public")
+				body := js.O("name", name, "description", desc, "color", c.sv("color"), "visibility", visibility, "default_assignee", c.sv("default-assignee"))
+				client, err := c.Client()
+				if err != nil {
+					return err
+				}
+				res, err := client.CreateInitiative(body)
+				if err != nil {
+					return err
+				}
+				return c.Out.Emit(res, func() []string { return lines("created  " + initiativeLine(js.Get(res, "data"))) })
+			},
+		},
+		{
+			Path:    []string{"initiatives", "update"},
+			Summary: `Update an initiative (only what you pass changes; "none" clears --default-assignee)`,
+			Args:    "<initiative-id>",
+			MinArgs: 1,
+			MaxArgs: 1,
+			Options: []OptSpec{
+				{Name: "name", Value: "<text>", Desc: "New name"},
+				{Name: "description", Value: "<text>", Desc: "New description"},
+				{Name: "description-file", Value: "<path|->", Desc: "Read the description from a file, or stdin with -"},
+				{Name: "color", Value: "<#hex>", Desc: "Hex color, e.g. #6366F1"},
+				{Name: "visibility", Value: "<public|private>", Desc: "Switch visibility (creator, owners and admins only)"},
+				{Name: "default-assignee", Value: "<member-id|none>", Desc: "Auto-assignee for new tasks (none clears it)"},
+				{Name: "summary", Value: "<text>", Desc: "Current-state summary, 2–3 sentences (shown to humans)"},
+				{Name: "summary-file", Value: "<path|->", Desc: "Read the summary from a file, or stdin with -"},
+				{Name: "memory-summary", Value: "<text>", Desc: "Condensed insights and decisions, 3–5 sentences"},
+				{Name: "memory-summary-file", Value: "<path|->", Desc: "Read the memory summary from a file, or stdin with -"},
+			},
+			Details: "The server stamps summary_updated_at / memory_summary_updated_at itself.",
+			Examples: []string{
+				`gc initiatives update <initiative-id> --summary "Beta is live; two blockers left."`,
+				"gc initiatives update <initiative-id> --memory-summary-file - < memory.md",
+				"gc initiatives update <initiative-id> --default-assignee none",
+			},
+			Run: func(c *Ctx) error {
+				patch := js.O("name", c.sv("name"), "color", c.sv("color"), "visibility", c.sv("visibility"), "default_assignee", nullable(c.sv("default-assignee")))
+				if err := c.oneStdin("description-file", "summary-file", "memory-summary-file"); err != nil {
+					return err
+				}
+				for _, f := range [][3]string{
+					{"description", "description-file", "description"},
+					{"summary", "summary-file", "summary"},
+					{"memory-summary", "memory-summary-file", "memory_summary"},
+				} {
+					v, err := c.textInput(f[0], f[1])
+					if err != nil {
+						return err
+					}
+					if v != js.Undefined {
+						patch.Set(f[2], v)
+					}
+				}
+				if patch.Len() == 0 {
+					return clierr.Usage("Nothing to update — pass at least one flag.", "See gc initiatives update --help.")
+				}
+				client, err := c.Client()
+				if err != nil {
+					return err
+				}
+				res, err := client.UpdateInitiative(c.Args[0], patch)
+				if err != nil {
+					return err
+				}
+				return c.Out.Emit(res, func() []string { return lines("updated  " + initiativeLine(js.Get(res, "data"))) })
+			},
+		},
+		{
 			Path:     []string{"initiatives", "memory"},
 			Summary:  "An initiative's agent memory (insights, key decisions, stats)",
 			Args:     "<initiative-id>",
