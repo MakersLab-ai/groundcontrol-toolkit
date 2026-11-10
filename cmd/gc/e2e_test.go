@@ -224,6 +224,9 @@ func newMockAPI() *mockAPI {
 			if b["status"] == "done" {
 				warnings = `,"warnings":[{"code":"scrum_expects_review","message":"finish with review"}]`
 			}
+			if v, ok := b["scheduled_date"]; ok && v == nil {
+				warnings = `,"warnings":[{"code":"scheduled_without_date","message":"never wakes up"}]`
+			}
 			writeJSON(w, 200, `{"data":`+merge(map[string]any{"id": taskID, "title": "Ship the CLI", "status": "review", "priority": "high"})+warnings+`}`)
 		case p == "/tasks/"+taskID:
 			writeJSON(w, 200, `{"data":{"id":"`+taskID+`","title":"Ship the CLI","status":"in_progress","priority":"high","description":"Build **gc**.","assignee":{"display_name":"Robo"},"initiative":{"name":"Core"},"updated_at":"2026-10-02T09:00:00Z"}}`)
@@ -248,7 +251,7 @@ func newMockAPI() *mockAPI {
 				meta += fmt.Sprintf(`,"cursor":%q`, cursor)
 			}
 			meta += "}"
-			writeJSON(w, 200, `{"data":{"task_comments":[{"id":"c2","task_id":"`+taskID+`","content":"Please also add docs","created_at":"2026-10-02T11:00:00Z","task_title":"Ship the CLI","for":"self"}],"doc_comments":[],"tasks_created":[],"docs_updated":[],"goal_checkins":[],"tasks_updated":[{"id":"x2","title":"Book flights","status":"todo","priority":"medium","for":"principal"}]},`+meta+`}`)
+			writeJSON(w, 200, `{"data":{"task_comments":[{"id":"c2","task_id":"`+taskID+`","content":"Please also add docs","created_at":"2026-10-02T11:00:00Z","task_title":"Ship the CLI","for":"self"}],"doc_comments":[],"tasks_created":[],"docs_updated":[],"goal_checkins":[],"scheduled_due":[{"id":"s1","title":"Follow up on the offer","status":"todo","priority":"medium","assigned_to":"m1","scheduled_date":"2026-10-02","due_since":"2026-10-02T04:00:01Z","for":"self"}],"tasks_updated":[{"id":"x2","title":"Book flights","status":"todo","priority":"medium","for":"principal"}]},`+meta+`}`)
 		default:
 			writeJSON(w, 404, `{"error":{"code":"not_found","message":"Not found"}}`)
 		}
@@ -420,6 +423,8 @@ func TestE2E(t *testing.T) {
 		}
 		mustContain(t, r.err, "has no cursor for acme-labs yet")
 		mustContain(t, r.out, "Please also add docs")
+		mustContain(t, r.out, "Scheduled tasks due (back as todo — their date came) (1):")
+		mustContain(t, r.out, "s1  todo         medium    Follow up on the offer  scheduled for 2026-10-02")
 		mustContain(t, r.out, "[principal]")
 		mustContain(t, r.out, "do NOT start it")
 		since1, _ := time.Parse(time.RFC3339Nano, api.lastPath("/api/v1/changes").query.Get("since"))
@@ -565,6 +570,30 @@ func TestE2E(t *testing.T) {
 		mustContain(t, r.err, "warning: scrum_expects_review — finish with review")
 		if r := gc([]string{"tasks", "update", taskID}, nil, nil); r.code != 2 {
 			t.Fatalf("empty update: code %d", r.code)
+		}
+		if r := gc([]string{"tasks", "create", "--title", "Later", "--scheduled", "2026-11-17"}, nil, nil); r.code != 0 {
+			t.Fatalf("scheduled create: code %d: %s", r.code, r.err)
+		}
+		if got, _ := json.Marshal(api.last().body); string(got) != `{"scheduled_date":"2026-11-17","status":"scheduled","title":"Later"}` {
+			t.Fatalf("scheduled create body %s", got)
+		}
+		r = gc([]string{"tasks", "update", taskID, "--scheduled", "none"}, nil, nil)
+		mustContain(t, r.err, "warning: scheduled_without_date — never wakes up")
+		if got, _ := json.Marshal(api.last().body); string(got) != `{"scheduled_date":null}` {
+			t.Fatalf("scheduled none body %s", got)
+		}
+		gc([]string{"tasks", "update", taskID, "--scheduled", "2026-11-17", "--status", "scheduled"}, nil, nil)
+		if got, _ := json.Marshal(api.last().body); string(got) != `{"scheduled_date":"2026-11-17","status":"scheduled"}` {
+			t.Fatalf("scheduled+status body %s", got)
+		}
+		for _, args := range [][]string{
+			{"tasks", "update", taskID, "--scheduled", "17.11.2026"},
+			{"tasks", "update", taskID, "--scheduled", "2026-11-17", "--status", "todo"},
+			{"tasks", "create", "--title", "x", "--scheduled", "none"},
+		} {
+			if r := gc(args, nil, nil); r.code != 2 {
+				t.Fatalf("%v: code %d", args, r.code)
+			}
 		}
 		if r := gc([]string{"tasks", "create", "--story-points", "many", "--title", "x"}, nil, nil); r.code != 2 {
 			t.Fatalf("bad number: code %d", r.code)
