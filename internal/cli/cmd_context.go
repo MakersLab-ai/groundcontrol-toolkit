@@ -296,6 +296,9 @@ func formatChanges(res any, since, cursor string) []string {
 		}
 	}
 	g := js.Get
+	section("Scheduled tasks due (back as todo — their date came)", "scheduled_due", func(x any, _ int) []string {
+		return lines(fmt.Sprintf("%s%s  scheduled for %s", tag(x), output.TaskLine(x), js.Str(g(x, "scheduled_date"))))
+	})
 	section("Task comments", "task_comments", func(x any, _ int) []string {
 		return lines(
 			fmt.Sprintf("%stask %s \"%s\" · %s", tag(x), js.Str(g(x, "task_id")), js.S(g(x, "task_title")), output.FmtTime(g(x, "created_at"))),

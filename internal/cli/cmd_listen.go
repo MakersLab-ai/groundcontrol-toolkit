@@ -33,7 +33,7 @@ import (
 // gc-worker.sh woke the agent for — `gc setup openclaw` passes it to --kinds.
 var OpenclawWorkerKinds = []string{
 	"task_comments", "doc_comments", "tasks_created", "tasks_updated", "docs_updated",
-	"goal_checkins", "table_rows_created", "table_rows_updated", "table_comments",
+	"goal_checkins", "table_rows_created", "table_rows_updated", "table_comments", "scheduled_due",
 }
 
 var kindRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -107,12 +107,15 @@ func collectItems(profile string, data any) []*js.Object {
 				"kind", kind,
 				"for", js.Or(g("for"), "self"),
 				"id", js.Or(g("id"), g("row_id"), nil),
-				"created_at", js.Or(g("created_at"), g("updated_at"), g("delivered_at"), nil),
+				"created_at", js.Or(g("created_at"), g("updated_at"), g("delivered_at"), g("due_since"), nil),
 			)
 			for _, k := range []string{"task_id", "doc_id", "table_id"} {
 				if v := g(k); js.Truthy(v) {
 					item.Set(k, v)
 				}
+			}
+			if kind == "scheduled_due" && !js.Truthy(g("task_id")) {
+				item.Set("task_id", g("id")) // the item IS the task
 			}
 			if t := js.Or(g("title"), g("task_title"), g("table_name"), g("goal", "title")); js.Truthy(t) {
 				item.Set("title", t)
@@ -266,7 +269,7 @@ func listenCommand() *Command {
 			"SIGINT/SIGTERM stop after the running command (its process group gets SIGTERM); a second signal kills it.",
 			"A corrupt cursor file is never reset silently: that workspace fails until you pass --since.",
 			"--kinds takes the /changes array names (task_comments, doc_comments, tasks_created, tasks_updated,",
-			"docs_updated, goal_checkins, table_rows_created, table_rows_updated, table_comments, …). Items of other",
+			"docs_updated, goal_checkins, table_rows_created, table_rows_updated, table_comments, scheduled_due, …). Items of other",
 			"kinds are ignored: they print nothing and wake nothing, and GC_LISTEN_COUNT counts only the kept ones",
 			"(GC_LISTEN_CHANGES_FILE still holds the full response). The cursor advances on every successful poll,",
 			"also when all its items were filtered out — those items are not delivered later.",

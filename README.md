@@ -83,6 +83,16 @@ gc tasks ask <task-id> --body-file ask.json   # {"questions":[{"prompt":"…","o
 gc initiatives update <initiative-id> --summary-file - < summary.md
 ```
 
+Something for later is **scheduled**, not left open: `--scheduled <YYYY-MM-DD>` sets status `scheduled` plus
+the date (`none` clears it on update). At 06:00 Europe/Vienna on that date the server moves the task back to
+`todo` and reports it once in `gc changes` under *Scheduled tasks due* (`scheduled_due`), which also wakes
+`gc listen`. A task left `scheduled` without a date never wakes; the server's `scheduled_without_date` warning
+is printed on stderr.
+
+```sh
+gc tasks create --title "Follow up on the offer" --scheduled 2026-11-17 --assign me
+```
+
 ## Polling and listening
 
 GROUNDCONTROL's `/changes` feed is cursor-based, and **reading never consumes anything**:

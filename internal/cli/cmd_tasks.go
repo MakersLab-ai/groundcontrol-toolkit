@@ -21,6 +21,7 @@ var taskFieldFlags = []OptSpec{
 	{Name: "assign", Value: "<me|member-id>", Desc: `Assignee: "me" or a member id`},
 	{Name: "initiative", Value: "<id>", Desc: "Initiative id (omit = personal task)"},
 	{Name: "due", Value: "<YYYY-MM-DD>", Desc: "Due date"},
+	{Name: "scheduled", Value: "<YYYY-MM-DD>", Desc: "Park it until then: status scheduled + that date; it returns as todo in gc changes (scheduled_due) at 06:00 Vienna"},
 	{Name: "story-points", Value: "<n>", Desc: "Estimate 0–999 (scrum workspaces)"},
 }
 
@@ -43,16 +44,47 @@ func taskPayload(c *Ctx, update bool) (*js.Object, error) {
 	if err != nil {
 		return nil, err
 	}
+	status, scheduled, err := scheduledFields(c, update)
+	if err != nil {
+		return nil, err
+	}
 	return js.O(
 		"title", c.sv("title"),
 		"description", desc,
-		"status", c.sv("status"),
+		"status", status,
 		"priority", c.sv("priority"),
 		"assigned_to", nul(c.sv("assign")),
 		"initiative_id", nul(c.sv("initiative")),
 		"due_date", nul(c.sv("due")),
+		"scheduled_date", scheduled,
 		"story_points", sp,
 	), nil
+}
+
+// scheduledFields turns --scheduled into status + scheduled_date. A date means
+// "park it until then", so it sets status scheduled too — a scheduled_date on a
+// todo task wakes nothing. "none" (update only) clears the date and leaves the
+// status alone: if the task stays scheduled, the server warns
+// scheduled_without_date and the warning is printed.
+func scheduledFields(c *Ctx, update bool) (status, scheduled any, err error) {
+	status, scheduled = c.sv("status"), js.Undefined
+	v, ok := c.sv("scheduled").(string)
+	if !ok {
+		return status, scheduled, nil
+	}
+	if v == "none" || v == "null" {
+		if !update {
+			return nil, nil, clierr.Usage("--scheduled none only clears a date on gc tasks update.")
+		}
+		return status, nil, nil
+	}
+	if _, perr := time.Parse("2006-01-02", v); perr != nil {
+		return nil, nil, clierr.Usage(fmt.Sprintf("--scheduled must be a date YYYY-MM-DD (or none), got \"%s\".", v))
+	}
+	if s, ok := status.(string); ok && s != "scheduled" {
+		return nil, nil, clierr.Usage(fmt.Sprintf("--scheduled sets status scheduled; it can't be combined with --status %s.", s))
+	}
+	return "scheduled", v, nil
 }
 
 func listLines(res any, line func(any) string, empty string) []string {
@@ -138,6 +170,7 @@ func taskCommands() []*Command {
 			Examples: []string{
 				`gc tasks create --title "Fix login redirect" --priority high --assign me`,
 				`gc tasks create --title "Write report" --description-file - < notes.md`,
+				`gc tasks create --title "Follow up on the offer" --scheduled 2026-11-17 --assign me`,
 			},
 			Run: func(c *Ctx) error {
 				if _, err := c.requireStr("title"); err != nil {
@@ -160,13 +193,13 @@ func taskCommands() []*Command {
 		},
 		{
 			Path:     []string{"tasks", "update"},
-			Summary:  `Update a task (only the flags you pass change; "none" clears assign/initiative/due/story-points)`,
+			Summary:  `Update a task (only the flags you pass change; "none" clears assign/initiative/due/scheduled/story-points)`,
 			Args:     "<task-id>",
 			MinArgs:  1,
 			MaxArgs:  1,
 			Options:  withTitle("New title"),
 			Details:  "In a scrum workspace (gc context) finish with --status review, never done.",
-			Examples: []string{"gc tasks update <task-id> --status in_progress", "gc tasks update <task-id> --status review", "gc tasks update <task-id> --assign none"},
+			Examples: []string{"gc tasks update <task-id> --status in_progress", "gc tasks update <task-id> --status review", "gc tasks update <task-id> --assign none", "gc tasks update <task-id> --scheduled 2026-11-17"},
 			Run: func(c *Ctx) error {
 				payload, err := taskPayload(c, true)
 				if err != nil {
@@ -361,6 +394,9 @@ func runTaskGet(c *Ctx) error {
 		}
 		if d := g("due_date"); js.Truthy(d) {
 			meta = append(meta, "due "+js.Str(d))
+		}
+		if d := g("scheduled_date"); js.Truthy(d) && g("status") == "scheduled" {
+			meta = append(meta, "scheduled for "+js.Str(d))
 		}
 		if sp := g("story_points"); !js.Nullish(sp) {
 			meta = append(meta, js.Str(sp)+"sp")

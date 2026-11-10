@@ -319,7 +319,7 @@ func TestSetupOpenclawFreshMacThenRerun(t *testing.T) {
 	}
 	plistPath := filepath.Join(h.home, "Library", "LaunchAgents", "ai.groundcontrol.listen.plist")
 	plist, _ := os.ReadFile(plistPath)
-	for _, want := range []string{"<string>ai.groundcontrol.listen</string>", "<string>/opt/gc/bin/gc</string>\n    <string>listen</string>\n    <string>--once</string>\n    <string>--all-profiles</string>\n    <string>--kinds</string>\n    <string>task_comments,doc_comments,tasks_created,tasks_updated,docs_updated,goal_checkins,table_rows_created,table_rows_updated,table_comments</string>\n    <string>--exec</string>\n    <string>" + wakePath + "</string>",
+	for _, want := range []string{"<string>ai.groundcontrol.listen</string>", "<string>/opt/gc/bin/gc</string>\n    <string>listen</string>\n    <string>--once</string>\n    <string>--all-profiles</string>\n    <string>--kinds</string>\n    <string>task_comments,doc_comments,tasks_created,tasks_updated,docs_updated,goal_checkins,table_rows_created,table_rows_updated,table_comments,scheduled_due</string>\n    <string>--exec</string>\n    <string>" + wakePath + "</string>",
 		"<integer>300</integer>", "<key>RunAtLoad</key>\n  <true/>", "<string>" + h.bin + ":/opt/gc/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
 		"<key>GC_CONFIG_DIR</key>", filepath.Join(h.home, ".openclaw", "logs", "gc-listen.log")} {
 		if !strings.Contains(string(plist), want) {
