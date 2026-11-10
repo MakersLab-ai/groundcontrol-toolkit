@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/MakersLab-ai/groundcontrol-toolkit/internal/config"
+	"github.com/MakersLab-ai/groundcontrol-toolkit/internal/js"
 )
 
 // TestMain doubles as the fake openclaw / launchctl when invoked through a
@@ -685,4 +686,49 @@ func fileMode(t *testing.T, path string) os.FileMode {
 		t.Fatal(err)
 	}
 	return st.Mode().Perm()
+}
+
+// A host with several agents (Clawdia + Herbert): openclaw cron add refuses to
+// guess the owner, so gc must name one — "main" when present.
+func TestSetupOpenclawNamesTheAgentOnAMultiAgentHost(t *testing.T) {
+	h := newSetupHost(t, "linux", "alpha")
+	h.openclawJSON(`{"agents":{"ownership":"explicit","entries":{"herbert":{"workspace":"~/w-h"},"main":{"workspace":"~/w"}}},"channels":{"telegram":{"allowFrom":["777"]}}}`)
+	if code, out, errOut := h.run("setup", "openclaw"); code != 0 {
+		t.Fatalf("code %d: %s %s", code, out, errOut)
+	}
+	calls := h.writes()
+	for _, name := range []string{"gc-worker-spawn", "gc-journal", "gc-initiative-summaries", "gc-memory-summaries"} {
+		if c := addCall(calls, name); c == nil || flagVal(c, "--agent") != "main" {
+			t.Fatalf("%s: want --agent main, got %q", name, c)
+		}
+	}
+}
+
+func TestSetupOpenclawAgentOverrideAndSingleAgent(t *testing.T) {
+	// Single agent (9.x agents.list): no --agent, openclaw picks it.
+	h := newSetupHost(t, "linux", "alpha")
+	h.openclawJSON(`{"agents":{"list":[{"id":"main"}]}}`)
+	if code, out, errOut := h.run("setup", "openclaw"); code != 0 {
+		t.Fatalf("code %d: %s %s", code, out, errOut)
+	}
+	if c := addCall(h.writes(), "gc-worker-spawn"); c == nil || hasFlag(c, "--agent") {
+		t.Fatalf("single agent must not pass --agent: %q", c)
+	}
+	// Several agents without "main": the default one; GC_OPENCLAW_AGENT wins over both.
+	cfg := `{"agents":{"list":[{"id":"ops"},{"id":"sales","default":true}]}}`
+	if got := ownerAgent(mustParse(t, cfg), config.Env{}); got != "sales" {
+		t.Fatalf("default agent: %q", got)
+	}
+	if got := ownerAgent(mustParse(t, cfg), config.Env{"GC_OPENCLAW_AGENT": "ops"}); got != "ops" {
+		t.Fatalf("override: %q", got)
+	}
+}
+
+func mustParse(t *testing.T, s string) any {
+	t.Helper()
+	v, err := js.Parse([]byte(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
 }

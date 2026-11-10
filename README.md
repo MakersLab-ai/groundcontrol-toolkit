@@ -136,6 +136,9 @@ warns.
 - **Guard.** While the plugin is still active (an entry `plugins.entries.groundcontrol` without
   `enabled: false`, or `groundcontrol` in `plugins.allow`, unless `plugins.allow` is a list without it), nothing
   is set up and `gc` exits 0 with a hint. Plugin and `gc` would both wake the agent. No `openclaw` → exit 1.
+- **Agent.** On a host with several agents (`agents.entries` in OpenClaw 10.x, `agents.list` in 9.x) `openclaw
+  cron add` refuses to guess the owner, so `gc` passes `--agent`: `GC_OPENCLAW_AGENT`, else `main`, else the agent
+  marked `default`, else the first one. A single-agent host gets no `--agent`.
 - **Worker spawn cron.** `gc-worker-spawn` with at most one profile, else `gc-worker-spawn-<profile>` per
   profile. Disabled (the listener fires it), `--session isolated --light-context`, no delivery; the user's
   Telegram chat (`channels.telegram.allowFrom[0]`, or the default account's) is bound so the agent can message on
