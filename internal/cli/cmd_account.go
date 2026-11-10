@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 
@@ -20,12 +22,16 @@ func accountCommands() []*Command {
 			Summary: "Connect gc to a workspace with an agent API key and save it as a profile",
 			Options: []OptSpec{
 				{Name: "skip-verify", Bool: true, Desc: "Save without calling /me (offline setup)"},
+				{Name: "no-openclaw", Bool: true, Desc: "Don't run gc setup openclaw afterwards"},
 			},
 			Details: strings.Join([]string{
 				"The key comes from --token <key>, --token - (stdin), an interactive hidden prompt (TTY),",
 				"or stdin when nothing is attached. It is verified with /me and stored in config.json",
 				"(dir 0700, file 0600). The profile is named after the workspace unless --profile is given,",
 				"and becomes the current one. The key is never printed.",
+				"With openclaw on this host (PATH or GC_OPENCLAW_BIN), a successful onboarding then runs gc setup openclaw:",
+				"automatically without a TTY, after a y/N question on a TTY. A failing setup only warns (the onboarding",
+				"still exits 0); --no-openclaw skips it.",
 			}, "\n"),
 			Examples: []string{
 				"gc onboarding --token gc_live_…",
@@ -162,9 +168,10 @@ func accountCommands() []*Command {
 func runOnboarding(c *Ctx) error {
 	sys := c.Sys
 	token, given := c.Values["token"].(string)
+	stdinUsed := (given && token == "-") || (!given && !sys.StdinIsTTY)
 	var err error
 	switch {
-	case (given && token == "-") || (!given && !sys.StdinIsTTY):
+	case stdinUsed:
 		token, err = sys.readStdin()
 	case !given:
 		if sys.PromptHidden == nil {
@@ -236,7 +243,7 @@ func runOnboarding(c *Ctx) error {
 
 	result := js.O("profile", profileName, "workspace", workspace, "agent", agent, "workflow", js.Or(workflow, nil),
 		"api_url", apiURL, "key", config.RedactKey(token), "config", path)
-	return c.Out.Emit(result, func() []string {
+	if err := c.Out.Emit(result, func() []string {
 		first := "Saved (not verified)."
 		if !skip {
 			wf := ""
@@ -256,5 +263,43 @@ func runOnboarding(c *Ctx) error {
 			note,
 			"Next:    gc context",
 		})
-	})
+	}); err != nil {
+		return err
+	}
+	maybeSetupOpenclaw(c, sys.StdinIsTTY && !stdinUsed)
+	return nil
+}
+
+// maybeSetupOpenclaw runs gc setup openclaw after an onboarding on a host with
+// openclaw. Never fails the onboarding: a failing setup is a warning.
+func maybeSetupOpenclaw(c *Ctx, interactive bool) {
+	sys := c.Sys
+	if c.bool("no-openclaw") || findOpenclaw(sys.Env) == "" {
+		return
+	}
+	if interactive {
+		io.WriteString(sys.Stderr, "OpenClaw found. Set up gc for it now (worker crons, skill, listener)? [y/N] ")
+		answer, _ := bufio.NewReader(sys.Stdin).ReadString('\n')
+		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" && a != "j" && a != "ja" {
+			io.WriteString(sys.Stderr, "Skipped. Later: gc setup openclaw\n")
+			return
+		}
+	}
+	// Keep stdout a single JSON document / value with --json or --field.
+	w := sys.Stdout
+	if c.Out.Raw() {
+		w = sys.Stderr
+	}
+	r, err := setupOpenclaw(c, false)
+	if err != nil {
+		io.WriteString(sys.Stderr, "warning: gc setup openclaw failed: "+err.Error()+" — run it again with: gc setup openclaw\n")
+		return
+	}
+	io.WriteString(w, "\nOpenClaw setup:\n")
+	for _, l := range r.lines() {
+		io.WriteString(w, "  "+l+"\n")
+	}
+	if r.failed > 0 {
+		io.WriteString(sys.Stderr, fmt.Sprintf("warning: %d OpenClaw setup step(s) failed — run gc setup openclaw again.\n", r.failed))
+	}
 }

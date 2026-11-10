@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/MakersLab-ai/groundcontrol-toolkit/internal/clierr"
@@ -186,6 +187,32 @@ func taskCommands() []*Command {
 			},
 		},
 		{
+			Path:    []string{"tasks", "ask"},
+			Summary: "Ask a human structured multiple-choice questions on a task (the answer arrives as a comment)",
+			Args:    "<task-id>",
+			MinArgs: 1,
+			MaxArgs: 1,
+			Options: []OptSpec{
+				{Name: "body-file", Value: "<path|->", Desc: `The ask as JSON: {"questions":[…], "content"?, "to"?} — a file, or stdin with -`},
+				{Name: "to", Value: "<member-id>", Desc: "Ask this human (default: your responsible human)"},
+				{Name: "content", Value: "<md>", Desc: "Intro / context shown above the questions"},
+				{Name: "content-file", Value: "<path|->", Desc: "Read the intro from a file, or stdin with -"},
+			},
+			Details: strings.Join([]string{
+				"Instead of a question comment: the human answers on their Desk with one click, and the answer is",
+				"posted back on the task as an ordinary comment — watch for it with gc changes.",
+				`JSON: {"questions":[{"prompt":"…","header"?:"…","options":[{"label":"…","description"?:"…"}],`,
+				`"multi"?:false,"allow_other"?:true}], "content"?:"…", "to"?:"<member-id>"}`,
+				"1–10 questions with 1–9 options each; the server validates the details. --to and --content(-file)",
+				"override the JSON's to/content. HTTP 404 = no such task, or the Desk is off in this workspace.",
+			}, "\n"),
+			Examples: []string{
+				"gc tasks ask <task-id> --body-file - <<'EOF'\n  {\"content\": \"Two ways to ship this:\", \"questions\": [{\"prompt\": \"Which one?\",\n   \"options\": [{\"label\": \"Today, without tests\"}, {\"label\": \"Friday, with tests\"}]}]}\n  EOF",
+				"gc tasks ask <task-id> --body-file ask.json --to <member-id>",
+			},
+			Run: runTaskAsk,
+		},
+		{
 			Path:    []string{"comment"},
 			Summary: "Post a Markdown comment on a task (progress, results, blockers)",
 			Args:    "<task-id> [<body> | -]",
@@ -362,5 +389,58 @@ func runTaskGet(c *Ctx) error {
 			}
 		}
 		return ls
+	})
+}
+
+func runTaskAsk(c *Ctx) error {
+	if err := c.oneStdin("body-file", "content-file"); err != nil {
+		return err
+	}
+	file, ok := c.str("body-file")
+	if !ok {
+		return clierr.Usage(`Missing --body-file <path|-> with the ask as JSON ({"questions":[…]}).`, "See gc tasks ask --help.")
+	}
+	raw, err := c.readSource(file)
+	if err != nil {
+		return err
+	}
+	parsed, err := parseJSON(raw, "--body-file")
+	if err != nil {
+		return err
+	}
+	body := js.Obj(parsed)
+	if body == nil {
+		return clierr.Usage("--body-file must hold a JSON object with a questions array.")
+	}
+	body = body.Clone()
+	if qs, ok := js.Arr(js.Get(body, "questions")); !ok || len(qs) == 0 {
+		return clierr.Usage("--body-file needs a non-empty \"questions\" array.", "See gc tasks ask --help.")
+	}
+	content, err := c.textInput("content", "content-file")
+	if err != nil {
+		return err
+	}
+	if content != js.Undefined {
+		body.Set("content", content)
+	}
+	if to, ok := c.str("to"); ok {
+		body.Set("to", to)
+	}
+	client, err := c.Client()
+	if err != nil {
+		return err
+	}
+	res, err := client.CreateAsk(c.Args[0], body)
+	if err != nil {
+		if strings.Contains(err.Error(), " 404:") {
+			return clierr.New(err.Error(), "HTTP 404 = no such task, or the Desk (asks) is off in this workspace — ask in a comment instead.")
+		}
+		return err
+	}
+	return c.Out.Emit(res, func() []string {
+		d := js.Get(res, "data")
+		n := len(js.List(js.Or(js.Get(d, "questions"), js.Get(body, "questions"))))
+		to := js.Str(js.Or(js.Get(d, "ask_to_member_id"), "your responsible human"))
+		return lines(fmt.Sprintf("asked %s on %s (%d question(s) to %s) — the answer arrives as a comment on the task", js.Str(js.Or(js.Get(d, "id"), "ok")), c.Args[0], n, to))
 	})
 }

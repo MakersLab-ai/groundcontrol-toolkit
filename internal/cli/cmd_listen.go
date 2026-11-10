@@ -29,6 +29,34 @@ import (
 	"github.com/MakersLab-ai/groundcontrol-toolkit/internal/js"
 )
 
+// OpenclawWorkerKinds is the set of /changes arrays the OpenClaw plugin's
+// gc-worker.sh woke the agent for — `gc setup openclaw` passes it to --kinds.
+var OpenclawWorkerKinds = []string{
+	"task_comments", "doc_comments", "tasks_created", "tasks_updated", "docs_updated",
+	"goal_checkins", "table_rows_created", "table_rows_updated", "table_comments",
+}
+
+var kindRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+// parseKinds reads `--kinds a,b`; nil = every kind counts.
+func parseKinds(v string) (map[string]bool, error) {
+	kinds := map[string]bool{}
+	for _, k := range strings.Split(v, ",") {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		if !kindRe.MatchString(k) {
+			return nil, clierr.Usage(fmt.Sprintf("Invalid kind \"%s\" in --kinds.", k), "Use the /changes array names, e.g. task_comments,tasks_updated.")
+		}
+		kinds[k] = true
+	}
+	if len(kinds) == 0 {
+		return nil, clierr.Usage("--kinds is empty.", "Use the /changes array names, e.g. task_comments,tasks_updated.")
+	}
+	return kinds, nil
+}
+
 type listenTarget struct {
 	name      string
 	isProfile bool // a saved profile (GC_PROFILE may name it for the spawned session)
@@ -226,6 +254,7 @@ func listenCommand() *Command {
 			{Name: "exec", Value: "<shell cmd>", Desc: "Run this via sh -c when there are changes, and wait for it"},
 			{Name: "all-profiles", Bool: true, Desc: "Poll every saved profile (one cursor each)"},
 			{Name: "since", Value: "<iso|15m|2h>", Desc: "Start here instead of the stored cursor (first run default: now)"},
+			{Name: "kinds", Value: "<a,b>", Desc: "Only these /changes arrays count and wake (default: all)"},
 		},
 		Details: strings.Join([]string{
 			"One cursor per workspace, owned by the listener: <config dir>/listen/<profile>.json. It advances to the",
@@ -236,11 +265,19 @@ func listenCommand() *Command {
 			"Without --exec: one line per item on stdout (JSON lines with --json). Logs go to stderr.",
 			"SIGINT/SIGTERM stop after the running command (its process group gets SIGTERM); a second signal kills it.",
 			"A corrupt cursor file is never reset silently: that workspace fails until you pass --since.",
+			"--kinds takes the /changes array names (task_comments, doc_comments, tasks_created, tasks_updated,",
+			"docs_updated, goal_checkins, table_rows_created, table_rows_updated, table_comments, …). Items of other",
+			"kinds are ignored: they print nothing and wake nothing, and GC_LISTEN_COUNT counts only the kept ones",
+			"(GC_LISTEN_CHANGES_FILE still holds the full response). The cursor advances on every successful poll,",
+			"also when all its items were filtered out — those items are not delivered later.",
+			"The OpenClaw worker set (what gc setup openclaw uses) is:",
+			"  --kinds " + strings.Join(OpenclawWorkerKinds, ","),
 		}, "\n"),
 		Examples: []string{
 			`gc listen --once --all-profiles --exec "openclaw cron run gc-worker-spawn"`,
 			`gc listen --interval 2m --exec 'claude -p "Run gc changes --since $GC_LISTEN_SINCE and handle it"'`,
 			"gc listen --json",
+			"gc listen --once --all-profiles --kinds task_comments,tasks_created,tasks_updated --exec ./wake.sh",
 		},
 		Run: runListen,
 	}
@@ -249,6 +286,7 @@ func listenCommand() *Command {
 type listener struct {
 	c        *Ctx
 	exec     string
+	kinds    map[string]bool // nil = all
 	logMu    sync.Mutex
 	mu       sync.Mutex
 	stopping bool
@@ -346,7 +384,13 @@ func runListen(c *Ctx) error {
 		return err
 	}
 
-	l := &listener{c: c, exec: execCmd, wake: make(chan struct{}, 1)}
+	var kinds map[string]bool
+	if v, ok := c.str("kinds"); ok || c.given("kinds") {
+		if kinds, err = parseKinds(v); err != nil {
+			return err
+		}
+	}
+	l := &listener{c: c, exec: execCmd, kinds: kinds, wake: make(chan struct{}, 1)}
 	l.ctx, l.cancel = context.WithCancel(context.Background())
 	defer l.cancel()
 	if c.Sys.OnSignal != nil {
@@ -478,11 +522,26 @@ func (l *listener) pollOne(t listenTarget, sinceOverride string) (string, error)
 		return "error", nil
 	}
 	items := collectItems(t.name, js.Get(res, "data"))
+	ignored := 0
+	if l.kinds != nil {
+		kept := []*js.Object{}
+		for _, i := range items {
+			if l.kinds[js.Str(js.Get(i, "kind"))] {
+				kept = append(kept, i)
+			}
+		}
+		ignored = len(items) - len(kept)
+		items = kept
+	}
 	if len(items) == 0 {
 		if err := writeCursor(path, next); err != nil {
 			return "", err
 		}
-		l.log(t.name, "0 changes")
+		msg := "0 changes"
+		if ignored > 0 {
+			msg += fmt.Sprintf(" (%d of other kinds ignored by --kinds)", ignored)
+		}
+		l.log(t.name, msg)
 		return "ok", nil
 	}
 	counts := js.NewObject()

@@ -1,10 +1,13 @@
 #!/bin/sh
-# Every skills/<name>/SKILL.md must open with frontmatter carrying `name`
-# (equal to its directory) and a non-empty `description` — `npx skills add`
-# and the agents' skill loaders skip a skill without them, silently.
+# Every skills/<name>/SKILL.md — and every per-agent variant
+# skills/<name>/SKILL.<agent>.md, which is installed under the same name — must
+# open with frontmatter carrying `name` (equal to its directory) and a
+# non-empty `description` — `npx skills add` and the agents' skill loaders
+# skip a skill without them, silently.
 set -eu
 status=0
-for f in skills/*/SKILL.md; do
+for f in skills/*/SKILL.md skills/*/SKILL.*.md; do
+  [ -e "$f" ] || continue
   dir=$(basename "$(dirname "$f")")
   if [ "$(head -n 1 "$f")" != "---" ]; then echo "$f: no frontmatter"; status=1; continue; fi
   fm=$(awk 'NR==1{next} /^---$/{exit} {print}' "$f")

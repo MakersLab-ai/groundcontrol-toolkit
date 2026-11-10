@@ -267,6 +267,20 @@ func (c *Ctx) textInput(inlineKey, fileKey string) (any, error) {
 	return c.sv(inlineKey), nil
 }
 
+// oneStdin: stdin can be read once, so at most one of these *-file flags may be `-`.
+func (c *Ctx) oneStdin(fileKeys ...string) error {
+	dash := []string{}
+	for _, k := range fileKeys {
+		if v, _ := c.str(k); v == "-" {
+			dash = append(dash, "--"+k)
+		}
+	}
+	if len(dash) > 1 {
+		return clierr.Usage("Only one flag can read stdin: " + strings.Join(dash, ", ") + ". Pass the others as files.")
+	}
+	return nil
+}
+
 var trailingSpace = regexp.MustCompile(`\s+$`)
 
 // bodyInput is a comment body: positional text, positional `-` (stdin), or --body-file.

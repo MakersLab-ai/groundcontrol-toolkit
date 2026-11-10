@@ -236,6 +236,22 @@ func TestSkillsEmbeddedAndThin(t *testing.T) {
 		if len(s.Content) >= 3000 {
 			t.Fatalf("%s: %d bytes — skills stay thin bootstraps", s.Name, len(s.Content))
 		}
+		for agent, v := range s.Variants {
+			file, err := os.ReadFile(filepath.Join("..", "..", "skills", s.Name, "SKILL."+agent+".md"))
+			if err != nil || string(file) != v {
+				t.Fatalf("%s (%s): embedded variant differs", s.Name, agent)
+			}
+			// Installed under the same name, so the same frontmatter rule and size cap apply.
+			if !strings.HasPrefix(v, "---\nname: "+s.Name+"\n") || len(skillDescription(v)) < 40 {
+				t.Fatalf("%s (%s): frontmatter", s.Name, agent)
+			}
+			if len(v) >= 3000 {
+				t.Fatalf("%s (%s): %d bytes — skills stay thin bootstraps", s.Name, agent, len(v))
+			}
+		}
+	}
+	if _, ok := skills[0].Variants["openclaw"]; !ok {
+		t.Fatal("groundcontrol has no openclaw variant")
 	}
 }
 
@@ -280,5 +296,34 @@ func TestSkillsInstall(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "groundcontrol-datasheets", "SKILL.md")); err != nil {
 		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "groundcontrol", "SKILL.md")); string(b) != Skills()[0].Content {
+		t.Fatal("--dir without --agent installs the generic skill")
+	}
+
+	// OpenClaw gets its overlay under the same skill name; the others the generic one.
+	os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755)
+	c = capture(env)
+	if Run([]string{"skills", "install", "--force"}, c.sys) != 0 {
+		t.Fatal(c.err.String())
+	}
+	oc, _ := os.ReadFile(filepath.Join(home, ".openclaw", "skills", "groundcontrol", "SKILL.md"))
+	if string(oc) != Skills()[0].Variants["openclaw"] || string(oc) == Skills()[0].Content {
+		t.Fatal("openclaw did not get its variant")
+	}
+	if b, _ := os.ReadFile(p); string(b) != Skills()[0].Content {
+		t.Fatal("claude got the openclaw variant")
+	}
+	dir = t.TempDir()
+	c = capture(env)
+	if Run([]string{"skills", "install", "--dir", dir, "--agent", "openclaw"}, c.sys) != 0 {
+		t.Fatal(c.err.String())
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "groundcontrol", "SKILL.md")); string(b) != Skills()[0].Variants["openclaw"] {
+		t.Fatal("--dir --agent openclaw installs the variant")
+	}
+	c = capture(env)
+	if Run([]string{"skills", "list"}, c.sys) != 0 || !strings.Contains(c.out.String(), "; openclaw variant ") {
+		t.Fatal(c.out.String())
 	}
 }
