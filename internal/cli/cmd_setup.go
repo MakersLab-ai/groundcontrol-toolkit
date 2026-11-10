@@ -233,6 +233,51 @@ func telegramChat(cfg any) string {
 	return first(js.Get(account, "allowFrom"))
 }
 
+// ownerAgent is the agent the gc crons belong to, or "" when the host has a
+// single agent (openclaw picks it). With several agents `openclaw cron add`
+// refuses to guess ("Multiple agents are configured, but this operation has no
+// explicit owner"), so gc names one: GC_OPENCLAW_AGENT, else "main" when it
+// exists, else the agent marked default, else the first one. Agents live under
+// agents.entries (a map, OpenClaw 10.x) or agents.list (an array, 9.x).
+func ownerAgent(cfg any, env config.Env) string {
+	if a := env["GC_OPENCLAW_AGENT"]; a != "" {
+		return a
+	}
+	agents := js.Get(cfg, "agents")
+	var ids []string
+	def := ""
+	if m := js.Obj(js.Get(agents, "entries")); m != nil {
+		for _, k := range m.Keys() {
+			ids = append(ids, k)
+			if v, _ := m.Get(k); js.Get(v, "default") == true && def == "" {
+				def = k
+			}
+		}
+	}
+	for _, a := range js.List(js.Get(agents, "list")) {
+		id := js.Str(js.Get(a, "id"))
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+		if js.Get(a, "default") == true && def == "" {
+			def = id
+		}
+	}
+	if len(ids) < 2 {
+		return ""
+	}
+	for _, id := range ids {
+		if id == "main" {
+			return id
+		}
+	}
+	if def != "" {
+		return def
+	}
+	return ids[0]
+}
+
 // ─── the prompts ──────────────────────────────────────────────────────────────
 
 // cronClosing ends every gc cron prompt. Load-bearing: an empty final message
@@ -571,6 +616,7 @@ func planSetup(c *Ctx, oc openclaw, ocConfig any) ([]*setupAction, error) {
 		}
 	}
 	chat := telegramChat(ocConfig)
+	agent := ownerAgent(ocConfig, oc.env)
 	ours := map[string]bool{}
 	for _, s := range spawns {
 		s := s
@@ -591,6 +637,10 @@ func planSetup(c *Ctx, oc openclaw, ocConfig any) ([]*setupAction, error) {
 		}
 		args := []string{"cron", "add", "--name", s.name, "--cron", spawnSchedule, "--session", "isolated", "--message", msg, "--light-context", "--disabled"}
 		notes := []string{"disabled, fired by the listener"}
+		if agent != "" {
+			args = append(args, "--agent", agent)
+			notes = append(notes, "agent "+agent)
+		}
 		if legacy != nil && legacy.model != "" {
 			args = append(args, "--model", legacy.model)
 			notes = append(notes, "model "+legacy.model+" from "+legacy.name)
@@ -645,6 +695,9 @@ func planSetup(c *Ctx, oc openclaw, ocConfig any) ([]*setupAction, error) {
 			continue
 		}
 		args := []string{"cron", "add", "--name", sc.name, "--cron", sc.schedule, "--session", "isolated", "--message", msg, "--light-context", "--no-deliver"}
+		if agent != "" {
+			args = append(args, "--agent", agent)
+		}
 		detail := "enabled"
 		if len(profiles) == 0 {
 			args = append(args, "--disabled")
@@ -815,6 +868,9 @@ func setupCommands() []*Command {
 				"Guard: while the plugin is active (an entry under plugins.entries.groundcontrol without enabled:false,",
 				"or groundcontrol in plugins.allow — unless plugins.allow is a list without it), nothing is set up and",
 				"gc exits 0 with a hint: both would wake the agent. Needs openclaw on PATH or GC_OPENCLAW_BIN (else exit 1).",
+				"",
+				"Agent: with several agents on the host (agents.entries / agents.list) the crons are added with --agent:",
+				"GC_OPENCLAW_AGENT, else main, else the default agent, else the first. A single-agent host gets no --agent.",
 				"",
 				"Crons (openclaw cron add; existing names are never duplicated):",
 				"  gc-worker-spawn                 ≤1 gc profile; with several: gc-worker-spawn-<profile> per profile.",
