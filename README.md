@@ -62,7 +62,7 @@ prompt.
 | | |
 | --- | --- |
 | Start | `onboarding`, `context`, `changes`, `listen`, `guide` |
-| Work | `tasks list\|get\|create\|update\|ask`, `comment`, `attach`, `docs …`, `search`, `semantic-search`, `initiatives list\|get\|create\|update\|memory`, `members`, `goals …`, `tables …` (datasheets), `journal …` |
+| Work | `tasks list\|get\|create\|update\|ask`, `comment`, `attach`, `docs …`, `search`, `semantic-search`, `initiatives list\|get\|create\|update\|statuses\|memory`, `members`, `goals …`, `tables …` (datasheets), `journal …` |
 | Setup | `profiles`, `skills list\|install`, `setup openclaw\|openclaw-wake`, `version` |
 
 Global flags work anywhere on the line: `--json`, `--field <path>`, `--profile`, `--token`, `--api-url`, and

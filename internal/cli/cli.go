@@ -58,7 +58,7 @@ func versionCommand() *Command {
 var groupSummary = map[string]string{
 	"tasks":       "Tasks: list, get, create, update, ask",
 	"docs":        "Documents: list, get, create, update, archive, comment",
-	"initiatives": "Initiatives: list, get, create, update, memory",
+	"initiatives": "Initiatives: list, get, create, update, statuses, memory",
 	"goals":       "Goals (OKRs): list, get, create, update, kr-update, checkin-submit",
 	"tables":      "Datasheets: list, get, rows, add-rows, update-rows, … (gc tables --help)",
 	"journal":     "Journal: list, get, summary",
