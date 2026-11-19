@@ -38,7 +38,20 @@ func initiativeLine(i any) string {
 	if js.Truthy(js.Get(i, "archived_at")) {
 		archived = "(archived)"
 	}
-	return output.Join("  ", js.JoinStr(js.Get(i, "id")), output.Pad(js.Get(i, "visibility"), 7), js.JoinStr(js.Get(i, "name")), counts, hidden, archived)
+	return output.Join("  ", js.JoinStr(js.Get(i, "id")), output.Pad(js.Get(i, "visibility"), 7), js.JoinStr(js.Get(i, "name")), initiativeStatus(i), counts, hidden, archived)
+}
+
+// initiativeStatus is the workspace-defined phase ("[Beta]"), empty when the
+// initiative has none or the server predates statuses.
+func initiativeStatus(i any) string {
+	if n := js.Get(i, "status", "name"); js.Truthy(n) {
+		return "[" + js.Str(n) + "]"
+	}
+	return ""
+}
+
+func statusLine(s any) string {
+	return output.Join("  ", js.JoinStr(js.Get(s, "id")), output.Pad(js.Get(s, "color"), 7), js.JoinStr(js.Get(s, "name")))
 }
 
 func docCommands() []*Command {
@@ -238,16 +251,18 @@ func initiativeCommands() []*Command {
 			Summary: "List initiatives (project containers) you can see",
 			Options: []OptSpec{
 				{Name: "counts", Bool: true, Desc: "Include task/doc counts"},
+				{Name: "status", Value: "<name,…|none>", Desc: "Only these statuses, comma-separated (none = no status)"},
 				{Name: "limit", Value: "<n>", Desc: "Max rows (default 100)"},
 				{Name: "offset", Value: "<n>", Desc: "Skip rows (paging)"},
 			},
-			Examples: []string{"gc initiatives list", "gc initiatives list --counts"},
+			Details:  "A status name the workspace doesn't define is an error that lists the valid ones (gc initiatives statuses).",
+			Examples: []string{"gc initiatives list", "gc initiatives list --counts", "gc initiatives list --status Testing,Beta"},
 			Run: func(c *Ctx) error {
 				var counts any = js.Undefined
 				if c.bool("counts") {
 					counts = "true"
 				}
-				q := js.O("limit", js.Or(c.sv("limit"), "100"), "offset", c.sv("offset"), "with_counts", counts)
+				q := js.O("limit", js.Or(c.sv("limit"), "100"), "offset", c.sv("offset"), "with_counts", counts, "status", c.sv("status"))
 				parts := []string{}
 				for _, k := range q.Keys() {
 					v, _ := q.Get(k)
@@ -308,6 +323,7 @@ func initiativeCommands() []*Command {
 				{Name: "color", Value: "<#hex>", Desc: "Hex color, e.g. #6366F1"},
 				{Name: "visibility", Value: "<public|private>", Desc: "public (default): the whole workspace; private: members only"},
 				{Name: "default-assignee", Value: "<member-id>", Desc: "New tasks in it go to this member when no assignee is given"},
+				{Name: "status", Value: "<name|id>", Desc: "Its phase, from gc initiatives statuses (default: no status)"},
 			},
 			Details: "Only when someone asked for an initiative — a task without a project is a task without --initiative.",
 			Examples: []string{
@@ -325,7 +341,7 @@ func initiativeCommands() []*Command {
 				}
 				// The API's own default has changed before; say public explicitly.
 				visibility := js.Or(c.sv("visibility"), "public")
-				body := js.O("name", name, "description", desc, "color", c.sv("color"), "visibility", visibility, "default_assignee", c.sv("default-assignee"))
+				body := js.O("name", name, "description", desc, "color", c.sv("color"), "visibility", visibility, "default_assignee", c.sv("default-assignee"), "status", nullable(c.sv("status")))
 				client, err := c.Client()
 				if err != nil {
 					return err
@@ -339,7 +355,7 @@ func initiativeCommands() []*Command {
 		},
 		{
 			Path:    []string{"initiatives", "update"},
-			Summary: `Update an initiative (only what you pass changes; "none" clears --default-assignee)`,
+			Summary: `Update an initiative (only what you pass changes; "none" clears --default-assignee and --status)`,
 			Args:    "<initiative-id>",
 			MinArgs: 1,
 			MaxArgs: 1,
@@ -350,6 +366,7 @@ func initiativeCommands() []*Command {
 				{Name: "color", Value: "<#hex>", Desc: "Hex color, e.g. #6366F1"},
 				{Name: "visibility", Value: "<public|private>", Desc: "Switch visibility (creator, owners and admins only)"},
 				{Name: "default-assignee", Value: "<member-id|none>", Desc: "Auto-assignee for new tasks (none clears it)"},
+				{Name: "status", Value: "<name|id|none>", Desc: "Its phase, from gc initiatives statuses (none clears it)"},
 				{Name: "summary", Value: "<text>", Desc: "Current-state summary, 2–3 sentences (shown to humans)"},
 				{Name: "summary-file", Value: "<path|->", Desc: "Read the summary from a file, or stdin with -"},
 				{Name: "memory-summary", Value: "<text>", Desc: "Condensed insights and decisions, 3–5 sentences"},
@@ -360,9 +377,10 @@ func initiativeCommands() []*Command {
 				`gc initiatives update <initiative-id> --summary "Beta is live; two blockers left."`,
 				"gc initiatives update <initiative-id> --memory-summary-file - < memory.md",
 				"gc initiatives update <initiative-id> --default-assignee none",
+				"gc initiatives update <initiative-id> --status Beta",
 			},
 			Run: func(c *Ctx) error {
-				patch := js.O("name", c.sv("name"), "color", c.sv("color"), "visibility", c.sv("visibility"), "default_assignee", nullable(c.sv("default-assignee")))
+				patch := js.O("name", c.sv("name"), "color", c.sv("color"), "visibility", c.sv("visibility"), "default_assignee", nullable(c.sv("default-assignee")), "status", nullable(c.sv("status")))
 				if err := c.oneStdin("description-file", "summary-file", "memory-summary-file"); err != nil {
 					return err
 				}
@@ -391,6 +409,23 @@ func initiativeCommands() []*Command {
 					return err
 				}
 				return c.Out.Emit(res, func() []string { return lines("updated  " + initiativeLine(js.Get(res, "data"))) })
+			},
+		},
+		{
+			Path:     []string{"initiatives", "statuses"},
+			Summary:  "The workspace's initiative statuses (phases), in board order",
+			Details:  "Owners and admins define the set in Settings → Initiatives. Pass a name or id to --status.",
+			Examples: []string{"gc initiatives statuses"},
+			Run: func(c *Ctx) error {
+				client, err := c.Client()
+				if err != nil {
+					return err
+				}
+				res, err := client.Get("/initiative-statuses")
+				if err != nil {
+					return err
+				}
+				return c.Out.Emit(res, func() []string { return listLines(res, statusLine, "No statuses defined.") })
 			},
 		},
 		{

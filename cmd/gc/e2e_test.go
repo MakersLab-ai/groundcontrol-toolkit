@@ -239,6 +239,14 @@ func newMockAPI() *mockAPI {
 			writeJSON(w, 201, `{"data":{"id":"a1","file_name":"notes.md","file_size":2048}}`)
 		case p == "/tasks/"+taskID+"/attachments":
 			writeJSON(w, 200, `{"data":[]}`)
+		case p == "/initiatives" && r.Method == "GET":
+			if st := r.URL.Query().Get("status"); st == "Nope" {
+				writeJSON(w, 400, `{"error":{"code":"bad_request","message":"Unknown status \"Nope\". Valid: Idea, Beta, none"}}`)
+				return
+			}
+			writeJSON(w, 200, `{"data":[{"id":"i1","name":"Core","visibility":"public","status":{"id":"s2","name":"Beta","color":"#E7FD92","position":1}},{"id":"i2","name":"Ops","visibility":"public","status":null}],"meta":{"total":2,"limit":100,"offset":0}}`)
+		case p == "/initiative-statuses":
+			writeJSON(w, 200, `{"data":[{"id":"s1","name":"Idea","color":"#FFD57F","position":0},{"id":"s2","name":"Beta","color":"#E7FD92","position":1}]}`)
 		case p == "/initiatives" && r.Method == "POST":
 			writeJSON(w, 201, `{"data":`+merge(map[string]any{"id": "i1", "visibility": "private"})+`}`)
 		case p == "/initiatives/i1" && r.Method == "PATCH":
@@ -649,6 +657,39 @@ func TestE2E(t *testing.T) {
 		if r := gc([]string{"initiatives", "update", "i1", "--summary", "a", "--summary-file", f}, nil, nil); r.code != 2 {
 			t.Fatalf("inline + file: code %d", r.code)
 		}
+	})
+
+	t.Run("initiatives status: --status on create/update/list, none clears, statuses lists the set", func(t *testing.T) {
+		r := gc([]string{"initiatives", "list", "--status", "Testing,Beta"}, nil, nil)
+		if r.code != 0 {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+		if q := api.lastMethod("GET").query; q.Get("status") != "Testing,Beta" {
+			t.Fatalf("list query %v", q)
+		}
+		mustContain(t, r.out, "i1  public   Core  [Beta]")
+		mustContain(t, r.out, "i2  public   Ops")
+		if r := gc([]string{"initiatives", "list", "--status", "Nope"}, nil, nil); r.code != 1 || !strings.Contains(r.err, "Valid: Idea, Beta") {
+			t.Fatalf("unknown status: code %d err %s", r.code, r.err)
+		}
+		gc([]string{"initiatives", "create", "--name", "Relaunch", "--status", "Idea"}, nil, nil)
+		if got, _ := json.Marshal(api.lastMethod("POST").body); string(got) != `{"name":"Relaunch","status":"Idea","visibility":"public"}` {
+			t.Fatalf("create body %s", got)
+		}
+		gc([]string{"initiatives", "update", "i1", "--status", "none"}, nil, nil)
+		if got, _ := json.Marshal(api.lastMethod("PATCH").body); string(got) != `{"status":null}` {
+			t.Fatalf("update body %s", got)
+		}
+		r = gc([]string{"initiatives", "update", "i1", "--status", "Beta"}, nil, nil)
+		if got, _ := json.Marshal(api.lastMethod("PATCH").body); string(got) != `{"status":"Beta"}` {
+			t.Fatalf("update body %s", got)
+		}
+		r = gc([]string{"initiatives", "statuses"}, nil, nil)
+		if r.code != 0 {
+			t.Fatalf("code %d: %s", r.code, r.err)
+		}
+		mustContain(t, r.out, "s1  #FFD57F  Idea")
+		mustContain(t, r.out, "s2  #E7FD92  Beta")
 	})
 
 	t.Run("tasks ask: JSON from stdin, --to/--content override, local check only for questions", func(t *testing.T) {
