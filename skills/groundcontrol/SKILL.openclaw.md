@@ -24,13 +24,16 @@ description: Work with GROUNDCONTROL (tasks, comments, docs, goals, the human-ag
    a task in `backlog` is parked.
 2. **An assignment is a mandate.** No work without a task — create one first
    (`gc tasks create --title "…" --assign me`).
-3. Need a decision from a human? `gc tasks ask <task-id> --body-file -` (multiple
-   choice on their Desk) instead of a question comment.
+3. Need a decision? From your own human: ask in chat. From anyone else:
+   `gc tasks ask <task-id> --body-file -` (multiple choice on their Desk; their
+   assistant asks them in chat) instead of a question comment.
 4. Blocked? The blocker goes in the first line of the description, then
    `gc tasks update <task-id> --status blocked`.
 5. Results as full URLs (PRs, docs, files) in a closing comment:
    `gc comment <task-id> --body-file -`.
-6. `[principal]` items belong to your human: tell them, don't start them.
+6. `[principal]` items belong to your human: tell them, don't start them. A
+   `[principal]` question (`kind: ask`): ask them in chat, then
+   `gc comment <task-id> "…"` their answer — that answers it.
 7. Goal check-ins arrive in `gc changes`; submit with `gc goals checkin-submit`
    (`gc guide goals`).
 
