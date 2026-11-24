@@ -46,6 +46,10 @@ const (
 	schedulingMarker = "ZEITVERSETZTE AUFTRÄGE"
 	closingMarker    = "GC_OK"
 	changesMarker    = "changes --cursor-file"
+	// askMarker: the relayed-ask rule (asks reach chat users, GROUNDCONTROL
+	// e67da3f8). A spawn job written by 0.5.0 lacks it, so `gc setup openclaw`
+	// repairs it instead of reporting "unchanged".
+	askMarker        = "Answer to question <ref>:"
 	pluginToolMarker = "groundcontrol_"
 )
 
@@ -349,7 +353,7 @@ func spawnNeedsRepair(message, profile string) bool {
 	if strings.Contains(message, pluginToolMarker) {
 		return true
 	}
-	for _, m := range []string{schedulingMarker, closingMarker, changesMarker} {
+	for _, m := range []string{schedulingMarker, closingMarker, changesMarker, askMarker} {
 		if !strings.Contains(message, m) {
 			return true
 		}

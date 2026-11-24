@@ -13,8 +13,8 @@ Needs a working `gc` (check with `gc context`; see the `groundcontrol` skill).
 
 ## The three rules
 
-1. **404 = no module.** Any `gc tables` call answering HTTP 404 means the datasheet
-   does not exist *or* this workspace has no datasheets module. Say so; don't retry.
+1. **404 = not found.** Datasheets exist in every workspace; HTTP 404 means the
+   datasheet doesn't exist or you can't see it. Check the id with `gc tables list`.
 2. **Rows are keyed by field id** (`fld_…`), never by column name. Read the schema
    first: `gc tables get <table-id>` lists every field id and type.
 3. **Select values are option ids** (`opt_…`), never labels — when writing *and*
