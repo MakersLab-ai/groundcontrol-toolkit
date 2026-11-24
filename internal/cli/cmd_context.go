@@ -266,6 +266,7 @@ func formatChanges(res any, since, cursor string) []string {
 	ls := []string{head}
 	count := 0
 	principal := false
+	askAsks := false
 	if o := js.Obj(d); o != nil {
 		for _, k := range o.Keys() {
 			v, _ := o.Get(k)
@@ -300,10 +301,18 @@ func formatChanges(res any, since, cursor string) []string {
 		return lines(fmt.Sprintf("%s%s  scheduled for %s", tag(x), output.TaskLine(x), js.Str(g(x, "scheduled_date"))))
 	})
 	section("Task comments", "task_comments", func(x any, _ int) []string {
-		return lines(
-			fmt.Sprintf("%stask %s \"%s\" · %s", tag(x), js.Str(g(x, "task_id")), js.S(g(x, "task_title")), output.FmtTime(g(x, "created_at"))),
-			"  "+output.OneLine(g(x, "content"), 300),
-		)
+		head := fmt.Sprintf("%stask %s \"%s\" · %s", tag(x), js.Str(g(x, "task_id")), js.S(g(x, "task_title")), output.FmtTime(g(x, "created_at")))
+		if g(x, "kind") == "ask" {
+			// A relayed question for your human: print it whole, line by line —
+			// cutting it to one 300-char line would drop options.
+			askAsks = true
+			out := []string{head + "  · question for your human"}
+			for _, l := range strings.Split(output.TrimEnd(js.S(g(x, "content"))), "\n") {
+				out = append(out, "  "+l)
+			}
+			return out
+		}
+		return lines(head, "  "+output.OneLine(g(x, "content"), 300))
 	})
 	section("Tasks created", "tasks_created", func(x any, _ int) []string { return lines(output.TaskLine(x)) })
 	section("Tasks updated", "tasks_updated", func(x any, _ int) []string {
@@ -358,6 +367,9 @@ func formatChanges(res any, since, cursor string) []string {
 	}
 	if principal {
 		ls = append(ls, "", "[principal] = concerns the human you assist: do NOT start it — tell them about it in this session.")
+	}
+	if askAsks {
+		ls = append(ls, "Question for your human: ask them, then `gc comment <task-id> \"…\"` their answer — that answers it.")
 	}
 	return ls
 }
