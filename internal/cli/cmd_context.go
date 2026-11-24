@@ -369,7 +369,7 @@ func formatChanges(res any, since, cursor string) []string {
 		ls = append(ls, "", "[principal] = concerns the human you assist: do NOT start it — tell them about it in this session.")
 	}
 	if askAsks {
-		ls = append(ls, "Question for your human: ask them, then `gc comment <task-id> \"…\"` their answer — that answers it.")
+		ls = append(ls, "Question for your human: ask them, then `gc comment <task-id> \"Answer to question <ref>: …\"` — only a comment starting like that answers it.")
 	}
 	return ls
 }
