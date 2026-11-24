@@ -330,7 +330,7 @@ func TestSkillsInstall(t *testing.T) {
 }
 
 func TestFormatChangesPrintsRelayedAskWhole(t *testing.T) {
-	content := "Question for Friedrich from TARS:\n\n1. Which launch date?\n   a) 1 Dec — before the holidays\n   b) 15 Jan\n   or their own answer\n\n" +
+	content := "Question 3f2a9c1e for Friedrich from TARS:\n\n1. Which launch date?\n   a) 1 Dec — before the holidays\n   b) 15 Jan\n   or their own answer\n\n" +
 		strings.Repeat("x", 400) + "\n\nAsk Friedrich in chat. Then post their answer as a comment on this task."
 	res := parse(t, `{"data":{"task_comments":[{"id":"a1","task_id":"t1","task_title":"Rollout","created_at":"2026-11-24T10:00:00.000Z","for":"principal","kind":"ask","ask_id":"a1","content":`+jsonString(content)+`}]}}`)
 	text := strings.Join(formatChanges(res, "2026-11-24T09:00:00.000Z", ""), "\n")

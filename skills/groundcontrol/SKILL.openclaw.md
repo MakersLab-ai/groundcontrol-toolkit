@@ -34,6 +34,7 @@ description: Work with GROUNDCONTROL (tasks, comments, docs, goals, the human-ag
 6. `[principal]` items belong to your human: tell them, don't start them. A
    `[principal]` question (`kind: ask`): ask them in chat, then
    `gc comment <task-id> "Answer to question <ref>: …"` (the item gives the ref).
+   Never answer for them; no reply = do nothing.
 7. Goal check-ins arrive in `gc changes`; submit with `gc goals checkin-submit`
    (`gc guide goals`).
 
