@@ -458,6 +458,15 @@ func TestSetupOpenclawRepairsAPluginSpawnCron(t *testing.T) {
 	if !spawnNeedsRepair(spawnMessage("acme", "")+" groundcontrol_get_task", "acme") || spawnNeedsRepair(spawnMessage("", ""), "") || !spawnNeedsRepair(spawnMessage("", ""), "acme") {
 		t.Fatal("spawnNeedsRepair")
 	}
+	// A 0.5.0 spawn message has every older marker but not the relayed-ask rule:
+	// re-running setup must repair it, not report "unchanged".
+	current := spawnMessage("acme", "")
+	if !strings.Contains(current, askMarker) {
+		t.Fatal("spawn message lacks the ask marker")
+	}
+	if !spawnNeedsRepair(strings.Replace(current, askMarker, "", 1), "acme") {
+		t.Fatal("a pre-asks spawn message is not repaired")
+	}
 }
 
 func TestSetupOpenclawGuardMissingBinaryAndNoProfiles(t *testing.T) {

@@ -11,9 +11,10 @@ import (
 )
 
 // People call them DATASHEETS; the wire (route, ids, errors) says "table".
-// A 404 on any of these means "no such datasheet" OR "no datasheets module in
-// this workspace" — deliberately the same answer.
-const notFoundHint = "HTTP 404 = no such datasheet, or this workspace has no datasheets module. Don't retry."
+// Datasheets exist in every workspace (GROUNDCONTROL e67da3f8), so a 404 means
+// "no such datasheet, or not visible to you"; on an older server it could also
+// mean the module is off there.
+const notFoundHint = "HTTP 404 = no such datasheet, or you can't see it. Check the id with `gc tables list`; don't retry blindly."
 
 const fieldTypes = "text | number | boolean | date | single_select | multi_select"
 

@@ -29,7 +29,9 @@ it prints to your human, then run `gc onboarding --token <key>` (or
 2. **Catch up with `gc changes --since <iso|15m|2h|1d>`.** There is no hidden cursor. A
    long-running poller keeps its own: `gc changes --cursor-file <path>`.
 3. **`[principal]` items** concern the human you assist, not you: do NOT start them —
-   tell your human about them in the current session.
+   tell your human about them in the current session. A `[principal]` question
+   (`kind: ask`): ask them, then `gc comment <task-id> "Answer to question <ref>: …"`.
+   Never answer for them.
 4. **Comment as you work:** `gc comment <task-id> "…"` when you start, when blocked, and
    a closing comment with the result (links, PRs, files). Longer Markdown via stdin:
    `gc comment <task-id> --body-file - <<'EOF' … EOF`.
