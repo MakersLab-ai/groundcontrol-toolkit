@@ -731,7 +731,7 @@ func TestE2E(t *testing.T) {
 		if r.code != 1 {
 			t.Fatalf("404: code %d", r.code)
 		}
-		mustContain(t, r.err, "the Desk (asks) is off")
+		mustContain(t, r.err, "no such task, or you can't see it")
 	})
 
 	t.Run("global flags anywhere: before the command and after positionals", func(t *testing.T) {

@@ -237,7 +237,7 @@ func taskCommands() []*Command {
 				`JSON: {"questions":[{"prompt":"…","header"?:"…","options":[{"label":"…","description"?:"…"}],`,
 				`"multi"?:false,"allow_other"?:true}], "content"?:"…", "to"?:"<member-id>"}`,
 				"1–10 questions with 1–9 options each; the server validates the details. --to and --content(-file)",
-				"override the JSON's to/content. HTTP 404 = no such task, or the Desk is off in this workspace.",
+				"override the JSON's to/content. HTTP 404 = no such task (or you can't see it).",
 			}, "\n"),
 			Examples: []string{
 				"gc tasks ask <task-id> --body-file - <<'EOF'\n  {\"content\": \"Two ways to ship this:\", \"questions\": [{\"prompt\": \"Which one?\",\n   \"options\": [{\"label\": \"Today, without tests\"}, {\"label\": \"Friday, with tests\"}]}]}\n  EOF",
@@ -469,7 +469,7 @@ func runTaskAsk(c *Ctx) error {
 	res, err := client.CreateAsk(c.Args[0], body)
 	if err != nil {
 		if strings.Contains(err.Error(), " 404:") {
-			return clierr.New(err.Error(), "HTTP 404 = no such task, or the Desk (asks) is off in this workspace — ask in a comment instead.")
+			return clierr.New(err.Error(), "HTTP 404 = no such task, or you can't see it (on an older server: asks are off there) — ask in a comment instead.")
 		}
 		return err
 	}

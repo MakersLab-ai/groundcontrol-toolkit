@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -326,4 +327,27 @@ func TestSkillsInstall(t *testing.T) {
 	if Run([]string{"skills", "list"}, c.sys) != 0 || !strings.Contains(c.out.String(), "; openclaw variant ") {
 		t.Fatal(c.out.String())
 	}
+}
+
+func TestFormatChangesPrintsRelayedAskWhole(t *testing.T) {
+	content := "Question 3f2a9c1e for Ada from Robo:\n\n1. Which launch date?\n   a) 1 Dec — before the holidays\n   b) 15 Jan\n   or their own answer\n\n" +
+		strings.Repeat("x", 400) + "\n\nAsk Ada in chat. Then post their answer as a comment on this task."
+	res := parse(t, `{"data":{"task_comments":[{"id":"a1","task_id":"t1","task_title":"Rollout","created_at":"2026-11-24T10:00:00.000Z","for":"principal","kind":"ask","ask_id":"a1","content":`+jsonString(content)+`}]}}`)
+	text := strings.Join(formatChanges(res, "2026-11-24T09:00:00.000Z", ""), "\n")
+	for _, want := range []string{"question for your human", "  b) 15 Jan", "  Ask Ada in chat.", "gc comment <task-id>", strings.Repeat("x", 400)} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in:\n%s", want, text)
+		}
+	}
+	// an ordinary comment is still one line, cut at 300
+	res = parse(t, `{"data":{"task_comments":[{"id":"c1","task_id":"t1","task_title":"Rollout","created_at":"2026-11-24T10:00:00.000Z","for":"self","content":`+jsonString(strings.Repeat("y", 400))+`}]}}`)
+	text = strings.Join(formatChanges(res, "2026-11-24T09:00:00.000Z", ""), "\n")
+	if strings.Contains(text, strings.Repeat("y", 400)) || strings.Contains(text, "question for your human") {
+		t.Fatalf("ordinary comment changed:\n%s", text)
+	}
+}
+
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

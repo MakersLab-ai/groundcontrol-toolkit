@@ -332,7 +332,10 @@ func spawnMessage(profile, gcPath string) string {
 		"Tasks bearbeiten und abschließen (`" + gc + " tasks update <task-id> --status …` — im Scrum-Workflow review, sonst done; " +
 		"`" + gc + " context` nennt den Workflow). Brauchst du eine Entscheidung eines Menschen, frag mit `" + gc +
 		" tasks ask <task-id> --body-file -` statt mit einem Frage-Kommentar. Einträge mit [principal] betreffen deinen User: " +
-		"nicht selbst starten, ihm Bescheid geben. Goal-Check-ins aus den Changes reichst du mit `" + gc + " goals checkin-submit` ein.\n" +
+		"nicht selbst starten, ihm Bescheid geben. Eine [principal]-Frage (question for your human): frag ihn per Telegram/message-Tool " +
+		"und trag seine Antwort, sobald sie kommt, mit `" + gc + " comment <task-id> --body-file -` ein — beginnend mit der Zeile " +
+		"\"Answer to question <ref>:\" aus der Frage (nur so gilt sie als Antwort). Antworte NIE selbst für ihn. Fragst du deinen eigenen User per " +
+		"`tasks ask`, sag ihm zusätzlich in einer Zeile per Telegram, dass eine Frage auf dem Task wartet. Goal-Check-ins aus den Changes reichst du mit `" + gc + " goals checkin-submit` ein.\n" +
 		"3. Die laufende Arbeit bleibt in GROUNDCONTROL. NUR wenn du eine echte Benachrichtigung oder Rückfrage an deinen User hast, " +
 		"die nicht in GROUNDCONTROL bleiben kann, sende sie über dein Telegram-/message-Tool an den User. Wenn es nichts Akutes zu melden " +
 		"gibt, sende NICHTS — keine Routine-, Status- oder „nichts zu tun“-Nachrichten. Keine Zusammenfassungen ohne Anlass.\n" +
